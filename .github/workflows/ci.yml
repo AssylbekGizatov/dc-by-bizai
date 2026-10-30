@@ -42,6 +42,11 @@ jobs:
         run: make setup
       - name: Unit tests, types, production UI, release hygiene
         run: make check
+      - name: Real API browser scenarios (synthetic data only)
+        run: |
+          npm ci --no-audit --no-fund
+          npx playwright install --with-deps chromium
+          .venv/bin/python scripts/run_e2e.py
       - name: Validate container configuration
         run: docker compose config --quiet
       - name: Build and smoke-test synthetic demo image

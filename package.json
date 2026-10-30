@@ -4,12 +4,17 @@
   "private": true,
   "description": "Local full-stack launcher; application dependencies live in frontend and backend.",
   "scripts": {
-    "dev": ".venv/bin/python scripts/with_env.py .venv/bin/python scripts/dev.py",
+    "dev": "node scripts/launch.cjs dev",
     "build": "npm --prefix frontend run build",
-    "test": "make check",
-    "start": "make serve"
+    "test": "node scripts/launch.cjs test",
+    "test:e2e": "node scripts/launch.cjs e2e",
+    "start": "node scripts/launch.cjs serve"
   },
   "engines": {
     "node": ">=22.12.0"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.14.0",
+    "@playwright/test": "1.64.1"
   }
 }

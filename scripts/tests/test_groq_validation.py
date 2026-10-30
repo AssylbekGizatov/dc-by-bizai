@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import json
+import os
 from decimal import Decimal
 from pathlib import Path
 
@@ -83,7 +84,7 @@ def test_each_retry_reserves_full_context_before_send():
     assert observed == [1, 2]
     assert result.mode.startswith("groq:") and result.api_attempts == 2
     assert result.cost_usd is None  # First attempt has no billing usage.
-    assert ledger.reserved == 2 * harness.token_cost("openai/gpt-oss-20b", 131072, 1024)
+    assert ledger.reserved == 2 * harness.token_cost("openai/gpt-oss-20b", harness.MAX_INPUT_TOKENS, 1024)
     assert ledger.events[0]["usage_known"] is False
     assert ledger.events[1]["usage_known"] is True
 
@@ -93,7 +94,7 @@ def test_budget_exhaustion_cannot_send_retry():
     def handler(request):
         calls.append(True)
         return httpx.Response(429, json={"error": "synthetic"})
-    one_attempt = harness.token_cost("openai/gpt-oss-20b", 131072, 1024)
+    one_attempt = harness.token_cost("openai/gpt-oss-20b", harness.MAX_INPUT_TOKENS, 1024)
     result, ledger, guarded = run_one(handler, budget=one_attempt)
     assert len(calls) == 1 and len(ledger.events) == 1
     assert result.mode == "local_template"
@@ -196,7 +197,8 @@ def test_persistent_ledger_reserves_survive_reopen_and_are_private(tmp_path):
     ledger.close()
     reopened = harness.BudgetLedger(Decimal(1), path)
     assert reopened.reserved == expected and len(reopened.events) == 1
-    assert path.stat().st_mode & 0o777 == 0o600
+    if os.name != "nt":
+        assert path.stat().st_mode & 0o777 == 0o600
     reopened.close()
     with pytest.raises(harness.ValidationStopped, match="invalid_do_not_reset"):
         harness.BudgetLedger(Decimal(1), path, mode="live")
@@ -212,12 +214,18 @@ def test_output_and_secret_paths_reject_git_or_permissive_files(tmp_path):
     key_file = tmp_path / "private.env"
     key_file.write_text("GROQ_API_KEY=synthetic-only\n")
     key_file.chmod(0o644)
-    with pytest.raises(harness.ValidationStopped, match="permissions"):
-        harness.read_live_key(key_file)
+    if os.name != "nt":
+        with pytest.raises(harness.ValidationStopped, match="permissions"):
+            harness.read_live_key(key_file)
     key_file.chmod(0o600)
     assert harness.read_live_key(key_file) == "synthetic-only"
     link = tmp_path / "link.env"
-    link.symlink_to(key_file)
+    try:
+        link.symlink_to(key_file)
+    except OSError:
+        if os.name == "nt":
+            return  # Windows without Developer Mode cannot create a test symlink.
+        raise
     with pytest.raises(harness.ValidationStopped, match="path_invalid"):
         harness.read_live_key(link)
 
@@ -274,6 +282,34 @@ def test_cli_errors_do_not_leak_exception_content(monkeypatch, capsys):
     output = capsys.readouterr().out
     assert "SYNTHETIC_PRIVATE_EXCEPTION_CANARY" not in output
     assert json.loads(output)["details_redacted"] is True
+
+
+def test_real_loopback_pipeline_with_mock_provider():
+    ledger = harness.BudgetLedger(Decimal("0.05"))
+    report = asyncio.run(harness.run_comparison("mock", "synthetic-offline-key", ledger,
+        ["openai/gpt-oss-120b"], 1, scope="pipeline", transport=httpx.MockTransport(harness.mock_response)))
+    assert report["latency_scope"].startswith("loopback_http_nlp_rag_generation_sqlite")
+    assert report["completion_attempts_in_ledger"] == 6
+    assert report["total_usage_cost_usd"] is None
+    assert all(row["api_attempts"] == 1 and row["provider_accepted"] for row in report["observations"])
+
+
+def test_oversized_synthetic_prompt_cannot_exceed_reserved_input_bound():
+    captured = []
+    def capture(request):
+        captured.append(json.loads(request.content))
+        return harness.mock_response(request)
+    run_one(capture)
+    payload = captured[0]
+    payload["messages"][0]["content"] = "x" * harness.MAX_INPUT_TOKENS
+    async def run():
+        ledger = harness.BudgetLedger(Decimal("0.05"))
+        async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: pytest.fail("Must not send oversized prompt"))) as client:
+            guarded = harness.GuardedClient(client, ledger, harness.load_cases())
+            with pytest.raises(harness.ValidationStopped, match="input_exceeds"):
+                await guarded.post(harness.API + "/chat/completions", json=payload, headers={})
+        assert ledger.events == []
+    asyncio.run(run())
 
 
 def test_percentile_is_nearest_rank_and_empty_is_unknown():

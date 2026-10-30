@@ -6,7 +6,7 @@ From the repository root (root Makefile installs dependencies):
 
 ```sh
 make setup-backend
-.venv/bin/uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8000 --no-access-log
+.venv/bin/uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8000 --no-access-log --no-proxy-headers
 make test-backend
 ```
 

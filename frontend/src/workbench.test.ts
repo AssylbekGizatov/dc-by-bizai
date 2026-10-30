@@ -128,6 +128,34 @@ describe('vanilla workbench API integration', () => {
     expect(JSON.parse(String(patches()[0][1]?.body))).toMatchObject({expected_revision: 3, draft_reply: 'Synthetic edited draft', status: 'reviewed'})
   })
 
+  it('keeps public rule provenance without exposing internal IDs in the workbench', async () => {
+    current.citations = [{...current.citations[0], id: '30:2.1', synthetic: false}]
+    await start()
+    const citations = $('#q-detail .rules')
+    expect(citations.textContent).toContain('Пункт 2.1')
+    expect(citations.textContent).toContain('Synthetic section')
+    expect(citations.textContent).toContain('Synthetic rule text.')
+    expect(citations.textContent).not.toContain('30:2.1')
+  })
+
+  it('moves keyboard focus between queue sections without navigation or losing edits', async () => {
+    await start()
+    fireEvent.click(detail().getByRole('button', {name:'Править'}))
+    fireEvent.input(draft(), {target:{value:'Synthetic unsaved draft during source comparison'}})
+    const originalHash = location.hash
+    const navigation = within(detail().getByRole('navigation', {name:'Разделы обращения'}))
+    fireEvent.click(navigation.getByRole('button', {name:'Правила'}))
+    expect(document.activeElement?.textContent).toBe('Основание ответа')
+    fireEvent.click(navigation.getByRole('button', {name:'Ответ'}))
+    expect(document.activeElement?.textContent).toBe('Черновик ответа')
+    fireEvent.click(navigation.getByRole('button', {name:'История'}))
+    expect(document.activeElement?.textContent).toBe('История решений')
+    expect(location.hash).toBe(originalHash)
+    expect(draft().value).toBe('Synthetic unsaved draft during source comparison')
+    expect(window.confirm).not.toHaveBeenCalled()
+    expect(patches()).toHaveLength(0)
+  })
+
   it('actually fetches a new revision after 409 rather than reusing cached queue data', async () => {
     await start()
     const fallback = fetchMock.getMockImplementation()!

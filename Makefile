@@ -21,13 +21,13 @@ dev:
 	"$(PYTHON)" scripts/with_env.py "$(PYTHON)" scripts/dev.py
 
 api:
-	"$(PYTHON)" scripts/with_env.py "$(PYTHON)" -m uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8000 --reload --reload-dir backend/app --no-access-log
+	"$(PYTHON)" scripts/with_env.py "$(PYTHON)" -m uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8000 --reload --reload-dir backend/app --no-access-log --no-proxy-headers
 
 build:
 	cd frontend && $(NPM) run build
 
 serve:
-	FRONTEND_DIST="$$(pwd)/frontend/dist" "$(PYTHON)" scripts/with_env.py "$(PYTHON)" -m uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8000 --no-access-log
+	FRONTEND_DIST="$$(pwd)/frontend/dist" "$(PYTHON)" scripts/with_env.py "$(PYTHON)" -m uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8000 --no-access-log --no-proxy-headers
 
 test: test-backend test-frontend test-release
 

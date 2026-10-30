@@ -64,9 +64,15 @@ engine for an unbounded ticket archive.
 
 `REQUEST_RATE_PER_MINUTE` defaults to 120 and is bounded to 1–10000. The limit
 covers API reads and writes per direct peer, excluding health and readiness.
-The service does not trust a client-supplied forwarded IP. Behind a proxy,
-configure one trusted ingress and account for its shared peer bucket. Active
-buckets have a hard bound. The independent `FLOOD_LIMIT_PER_HOUR` still defaults
+Every supported launch command explicitly uses Uvicorn `--no-proxy-headers`.
+The current deployment has no reverse proxy: the rate bucket uses the direct
+socket peer, even when a loopback client sends rotating `X-Forwarded-For`,
+`Forwarded` or `X-Real-IP` headers. Uvicorn's default loopback proxy trust must
+not be used here: it can replace the peer before application middleware runs.
+`FORWARDED_ALLOW_IPS` cannot override the explicit disabled proxy middleware.
+A future reverse-proxy deployment needs a separate trusted-ingress configuration
+and verification of client identity; simply removing this flag is not supported.
+Active buckets have a hard bound. The independent `FLOOD_LIMIT_PER_HOUR` still defaults
 to five: subsequent player requests remain accepted and are marked for human
 review; it is not an HTTP refusal.
 

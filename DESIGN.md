@@ -87,7 +87,7 @@ Controls use 4px corners; work regions 6px; the dialog 8px. Form borders carry i
 
 The primary action is solid blue. Secondary actions have white fill and a visible border. Pending writes disable controls; text announces progress. Errors preserve form and editor values. Loading uses one bounded progress indicator; reduced-motion makes it static without suppressing status text.
 
-The review reason area names the human-review requirement before listing reasons. Rules show public number, unique internal ID, section and full text. Facts pair each value with its origin; focus on a fact highlights the associated player text. Algorithm confidence stays inside diagnostics and is explicitly not measured accuracy.
+The review reason area names the human-review requirement before listing reasons. Rules show public number, section and full text; internal source IDs remain in the API data, not in the reading flow. Both analyzer and queue offer direct section buttons that move keyboard focus without changing the route or losing edits. Source text stays visible so reviewing it is an explicit part of the task. Facts pair each value with its origin; focus on a fact highlights the associated player text. Algorithm confidence stays inside diagnostics and is explicitly not measured accuracy.
 
 The analyzer editor is for copying. Its hint links to the saved queue record for durable edits. The queue editor names the saved revision, distinguishes unsaved changes, edits notes, and exposes a recoverable draft and note after revision conflict. Simulation requires explicit confirmation and states that no message reaches the game.
 

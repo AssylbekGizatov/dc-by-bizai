@@ -15,7 +15,7 @@ def read_env(path: Path) -> dict[str, str]:
     result: dict[str, str] = {}
     if not path.exists():
         return result
-    for number, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    for number, raw in enumerate(path.read_text(encoding="utf-8-sig").splitlines(), 1):
         line = raw.strip()
         if not line or line.startswith("#"):
             continue

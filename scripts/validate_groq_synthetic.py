@@ -5,7 +5,7 @@ Default --mode=plan is offline and never reads GROQ_API_KEY. --mode=mock exercis
 the same adapter with a MockTransport. Live mode requires explicit authorization,
 an environment key, and a durable private ledger outside every Git checkout.
 
-Pricing/model documentation checked 2026-10-30:
+Pricing/model documentation checked 2026-10-31:
 https://console.groq.com/docs/models
 https://console.groq.com/docs/model/openai/gpt-oss-20b
 https://console.groq.com/docs/structured-outputs
@@ -19,17 +19,24 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import fcntl
 import hashlib
 import json
 import logging
 import math
 import os
+import socket
+import statistics
 import sys
 import time
 from datetime import datetime, timezone
+from contextlib import asynccontextmanager
 from decimal import Decimal
 from pathlib import Path
+
+if os.name == "nt":
+    import msvcrt
+else:
+    import fcntl
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
@@ -38,12 +45,13 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import httpx
 
 from app.config import Settings
-from app.generation import DraftGenerator, _composed_only_of, approved_clauses, validate_draft
+from app.generation import DraftGenerator, GeneratedDraft, GenerationResult, _composed_only_of, approved_clauses, validate_draft
 from app.nlp import analyze, redact_for_external
+from app.private_files import restrict_private_file
 from app.schemas import TriageRequest
 from with_env import read_env
 
-PRICING_REVIEWED_ON = "2026-10-30"
+PRICING_REVIEWED_ON = "2026-10-31"
 RATES = {
     "openai/gpt-oss-20b": (Decimal("0.075"), Decimal("0.30")),
     "openai/gpt-oss-120b": (Decimal("0.15"), Decimal("0.60")),
@@ -51,7 +59,10 @@ RATES = {
 MAX_BUDGET_USD = Decimal("1.00")
 MAX_COMPLETION_REQUESTS = 48
 MAX_MODEL_PROBES = 2
-MAX_INPUT_TOKENS = 131_072
+# GPT-OSS uses byte-level BPE. Bound the entire serialized request plus chat
+# framing allowance before reserving/sending; this is deliberately larger than
+# the actual fixed smoke fixtures. No full-context reservation is necessary.
+MAX_INPUT_TOKENS = 16_384
 MAX_COMPLETION_TOKENS = 1024
 FIXTURE = ROOT / "backend/fixtures/synthetic_groq_validation.json"
 FIXTURE_SHA256 = "9e9eb2bb94b7c35852ab04e02920fbfe9b668624ffdecea3ad375c055f1201b3"
@@ -85,16 +96,26 @@ def private_path(path: Path) -> Path:
     # roots. A real checkout has .git/HEAD, or a .git file for a linked worktree.
     if any((parent / ".git").is_file() or (parent / ".git/HEAD").is_file() for parent in resolved.parents):
         raise ValidationStopped("private_output_inside_git_checkout")
-    if resolved.exists() and resolved.stat().st_mode & 0o077:
-        raise ValidationStopped("private_output_permissions_must_be_0600")
+    if resolved.exists():
+        if os.name == "nt":
+            # POSIX mode bits cannot describe an NTFS DACL. Protect the existing
+            # file before reading/writing rather than pretending chmod is enough.
+            restrict_private_file(resolved)
+        elif resolved.stat().st_mode & 0o077:
+            raise ValidationStopped("private_output_permissions_must_be_0600")
     return resolved
 
 
 def write_private_json(path: Path, data: dict, *, exclusive: bool = False) -> None:
     path = private_path(path)
-    flags = os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW
+    flags = os.O_WRONLY | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
     flags |= os.O_EXCL if exclusive else os.O_TRUNC
     fd = os.open(path, flags, 0o600)
+    try:
+        restrict_private_file(path)
+    except BaseException:
+        os.close(fd)
+        raise
     with os.fdopen(fd, "w", encoding="utf-8") as output:
         json.dump(data, output, ensure_ascii=False, indent=2, allow_nan=False)
         output.write("\n")
@@ -122,7 +143,7 @@ def read_live_key(env_file: Path | None) -> str:
 
 
 class BudgetLedger:
-    """Reserve the FULL model context before every attempt, including retries.
+    """Reserve the enforced input/output bound before every attempt, including retries.
 
     Reservations are never refunded, even for timeout, HTTP failure, or invalid
     output. Actual usage is separate; unknown cost is never reported as zero.
@@ -137,10 +158,18 @@ class BudgetLedger:
         if path is not None:
             self.path = private_path(path)
             lock_path = private_path(Path(str(self.path) + ".lock"))
-            self.lock = os.open(lock_path, os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+            self.lock = os.open(lock_path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
             try:
-                fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
+                restrict_private_file(lock_path)
+                if os.name == "nt":
+                    if os.fstat(self.lock).st_size == 0:
+                        os.write(self.lock, b"\0")
+                        os.fsync(self.lock)
+                    os.lseek(self.lock, 0, os.SEEK_SET)
+                    msvcrt.locking(self.lock, msvcrt.LK_NBLCK, 1)
+                else:
+                    fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
                 os.close(self.lock)
                 self.lock = None
                 raise ValidationStopped("another_validation_run_holds_budget_lock") from None
@@ -204,9 +233,15 @@ class BudgetLedger:
 
     def close(self) -> None:
         if self.lock is not None:
-            fcntl.flock(self.lock, fcntl.LOCK_UN)
-            os.close(self.lock)
-            self.lock = None
+            try:
+                if os.name == "nt":
+                    os.lseek(self.lock, 0, os.SEEK_SET)
+                    msvcrt.locking(self.lock, msvcrt.LK_UNLCK, 1)
+                else:
+                    fcntl.flock(self.lock, fcntl.LOCK_UN)
+            finally:
+                os.close(self.lock)
+                self.lock = None
 
 
 class GuardedClient:
@@ -233,6 +268,9 @@ class GuardedClient:
         if set(json) - {"model", "temperature", "max_completion_tokens", "response_format", "messages",
                         "reasoning_effort", "include_reasoning", "service_tier", "seed", "n", "stream"}:
             raise ValidationStopped("unreviewed_provider_request_field")
+        encoded_size = len(__import__("json").dumps(json, ensure_ascii=False).encode("utf-8"))
+        if encoded_size + 256 > MAX_INPUT_TOKENS:
+            raise ValidationStopped("synthetic_input_exceeds_reserved_token_bound")
         messages = json.get("messages", [])
         if len(messages) != 2 or [m.get("role") for m in messages] != ["system", "user"]:
             raise ValidationStopped("unexpected_provider_messages")
@@ -317,13 +355,47 @@ def percentile95(values: list[float]) -> float | None:
     return sorted(values)[math.ceil(len(values) * 0.95) - 1] if values else None
 
 
+@asynccontextmanager
+async def local_pipeline(settings: Settings, generator: DraftGenerator, enabled: bool):
+    """Real loopback HTTP + FastAPI + local NLP/RAG + SQLite, synthetic only."""
+    if not enabled:
+        yield None
+        return
+    import uvicorn
+    from app.main import create_app
+    from app.service import CopilotService
+    service = CopilotService(settings, generator)
+    app = create_app(settings, service)
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.bind(("127.0.0.1", 0))
+    address = f"http://127.0.0.1:{sock.getsockname()[1]}"
+    server = uvicorn.Server(uvicorn.Config(app, log_level="critical", access_log=False, proxy_headers=False))
+    task = asyncio.create_task(server.serve(sockets=[sock]))
+    try:
+        deadline = time.monotonic() + 10
+        while not server.started:
+            if task.done() or time.monotonic() >= deadline:
+                raise ValidationStopped("local_pipeline_startup_failed")
+            await asyncio.sleep(.01)
+        async with httpx.AsyncClient(base_url=address, timeout=8, trust_env=False,
+                                    headers={"Authorization": "Bearer synthetic-validation-token"}) as client:
+            yield client
+    finally:
+        server.should_exit = True
+        try:
+            await asyncio.wait_for(task, 5)
+        finally:
+            sock.close()
+
+
 async def run_comparison(mode: str, key: str, ledger: BudgetLedger, models: list[str],
                          rounds: int, *, trust_environment_proxy: bool = False,
-                         transport: httpx.AsyncBaseTransport | None = None) -> dict:
+                         transport: httpx.AsyncBaseTransport | None = None, scope: str = "adapter") -> dict:
     cases = load_cases()
     observations = []
     logging.getLogger("httpx").setLevel(logging.CRITICAL)
     logging.getLogger("httpcore").setLevel(logging.CRITICAL)
+    logging.getLogger("copilot.http").setLevel(logging.CRITICAL)
     client_args = {"timeout": 4, "follow_redirects": False, "trust_env": trust_environment_proxy}
     if transport is not None:
         client_args["transport"] = transport
@@ -335,35 +407,47 @@ async def run_comparison(mode: str, key: str, ledger: BudgetLedger, models: list
         for model in models:
             inp, out = RATES[model]
             settings = Settings(mode="test", database_path=":memory:", rules_path=None, taxonomy_path=None,
-                api_token=None, local_encoder_path=None, frontend_dist=None, enable_groq=True,
+                api_token="synthetic-validation-token", local_encoder_path=None, frontend_dist=None, enable_groq=True,
                 groq_api_key=key, groq_model=model, groq_max_retries=1, groq_timeout_seconds=4,
                 groq_input_usd_per_million=float(inp), groq_output_usd_per_million=float(out),
                 allow_private_data_to_groq=False)
             generator = DraftGenerator(settings, guarded)
-            for repetition in range(rounds):
-                for case in cases:
-                    analysis = analyze(TriageRequest(kind="report", messages=[{"role": "player", "text": case["text"]}]))
-                    if analysis.language != case["language"] or analysis.sensitive or analysis.injection:
-                        raise ValidationStopped("synthetic_local_analysis_changed")
-                    started = time.perf_counter()
-                    result = await generator.generate(analysis, [], True, False)
-                    elapsed = (time.perf_counter() - started) * 1000
-                    clauses = approved_clauses(analysis, [], True)
-                    safe = (validate_draft(result.draft, [], False, clauses)
-                            and set(_composed_only_of(result.draft.text, clauses) or []) == set(clauses))
-                    observations.append({
-                        "case_id": case["id"], "language": case["language"], "model": model,
-                        "repetition": repetition + 1, "bounded_output_valid": safe,
-                        "provider_accepted": result.mode == "groq:" + model,
-                        "api_attempts": result.api_attempts, "latency_ms": round(elapsed, 3),
-                        "fallback": result.mode == "local_template",
-                    })
-                    if guarded.block_reason:
-                        raise ValidationStopped(guarded.block_reason)
-                    # The generator catches ValueError for safe fallback. A refused
-                    # reservation must additionally stop the entire comparison.
-                    if not result.api_attempts or ledger.reserved >= ledger.budget:
-                        raise ValidationStopped("validation_budget_or_pre_send_guard_stopped")
+            async with local_pipeline(settings, generator, scope == "pipeline") as pipeline:
+                for repetition in range(rounds):
+                    for case in cases:
+                        analysis = analyze(TriageRequest(kind="report", messages=[{"role": "player", "text": case["text"]}]))
+                        if analysis.language != case["language"] or analysis.sensitive or analysis.injection:
+                            raise ValidationStopped("synthetic_local_analysis_changed")
+                        started = time.perf_counter()
+                        before_attempts = len(ledger.events)
+                        if pipeline is None:
+                            result = await generator.generate(analysis, [], True, False)
+                        else:
+                            # CLI permits one round of distinct fixtures: latency must
+                            # include an actual provider attempt on every measured case.
+                            response = await pipeline.post("/api/tickets", json={"text": case["text"], "kind": "report"})
+                            response.raise_for_status()
+                            ticket = response.json()
+                            diagnostics = ticket["diagnostics"]
+                            if diagnostics["cache_hit"]:
+                                raise ValidationStopped("cached_pipeline_result_not_a_provider_measurement")
+                            result = GenerationResult(GeneratedDraft(text=ticket["draft_reply"], cited=ticket["result"]["draft_reply"]["cited"]),
+                                diagnostics["generation_mode"], diagnostics["warnings"], api_attempts=len(ledger.events) - before_attempts)
+                        elapsed = (time.perf_counter() - started) * 1000
+                        clauses = approved_clauses(analysis, [], True)
+                        safe = (validate_draft(result.draft, [], False, clauses)
+                                and set(_composed_only_of(result.draft.text, clauses) or []) == set(clauses))
+                        observations.append({
+                            "case_id": case["id"], "language": case["language"], "model": model,
+                            "repetition": repetition + 1, "bounded_output_valid": safe,
+                            "provider_accepted": result.mode == "groq:" + model,
+                            "api_attempts": result.api_attempts, "latency_ms": round(elapsed, 3),
+                            "fallback": result.mode == "local_template",
+                        })
+                        if guarded.block_reason:
+                            raise ValidationStopped(guarded.block_reason)
+                        if not result.api_attempts or ledger.reserved >= ledger.budget:
+                            raise ValidationStopped("validation_budget_or_pre_send_guard_stopped")
     completions = [event for event in ledger.events if event["kind"] == "completion"]
     known_cost = sum((token_cost(event["model"], event["input_tokens"], event["output_tokens"])
                       for event in completions if event["usage_known"]), Decimal(0))
@@ -371,11 +455,19 @@ async def run_comparison(mode: str, key: str, ledger: BudgetLedger, models: list
     summary = {}
     for model in models:
         rows = [row for row in observations if row["model"] == model]
+        billed_rows = [event for event in completions if event["model"] == model]
+        costs = [token_cost(model, event["input_tokens"], event["output_tokens"]) for event in billed_rows if event["usage_known"]]
+        billed_complete = bool(billed_rows) and len(costs) == len(billed_rows)
         summary[model] = {
             "sample_count": len(rows), "provider_accepted_count": sum(row["provider_accepted"] for row in rows),
             "bounded_output_valid_count": sum(row["bounded_output_valid"] for row in rows),
             "fallback_count": sum(row["fallback"] for row in rows),
             "observed_p95_ms_nearest_rank": percentile95([row["latency_ms"] for row in rows]),
+            "observed_p50_ms": statistics.median(row["latency_ms"] for row in rows) if rows else None,
+            "input_tokens": sum(event["input_tokens"] for event in billed_rows if event["usage_known"]),
+            "output_tokens": sum(event["output_tokens"] for event in billed_rows if event["usage_known"]),
+            "total_cost_usd": str(sum(costs, Decimal(0))) if mode == "live" and billed_complete else None,
+            "mean_cost_per_case_usd": str(sum(costs, Decimal(0)) / len(rows)) if mode == "live" and billed_complete and rows else None,
         }
     return {
         "mode": mode, "synthetic_only": True, "no_rules_or_dataset_uploaded": True,
@@ -386,7 +478,7 @@ async def run_comparison(mode: str, key: str, ledger: BudgetLedger, models: list
         "cost_method": "Reported usage at documented uncached on-demand rates; conservative estimate, not an invoice. No cache discount assumed.",
         "usage_complete": all_usage_known, "category_accuracy": None, "priority_macro_f1": None,
         "language_quality_native_reviewed": False, "production_quality_validated": False,
-        "latency_scope": "direct_generation_adapter_only; excludes HTTP server, retrieval, encoder startup",
+        "latency_scope": "loopback_http_nlp_rag_generation_sqlite; excludes server startup; no dense encoder" if scope == "pipeline" else "direct_generation_adapter_only; excludes HTTP server, retrieval, encoder startup",
         "warning": "Small synthetic smoke test, not a gold-set accuracy benchmark or a production p95 guarantee. Mock tokens/timing are not provider measurements.",
         "observations": observations,
     }
@@ -411,6 +503,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--mode", choices=("plan", "mock", "live"), default="plan")
     parser.add_argument("--model", action="append", choices=tuple(RATES))
     parser.add_argument("--rounds", type=int, choices=(1, 2), default=2)
+    parser.add_argument("--scope", choices=("adapter", "pipeline"), default="adapter")
     parser.add_argument("--budget-usd", default="1.00")
     parser.add_argument("--ledger", type=Path)
     parser.add_argument("--env-file", type=Path,
@@ -421,6 +514,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--trust-environment-proxy", action="store_true",
                         help="Use only the environment's existing approved proxy; requires httpx SOCKS support if configured")
     args = parser.parse_args(argv)
+    if args.scope == "pipeline" and args.rounds != 1:
+        parser.error("pipeline measurement requires --rounds 1 to exclude cached responses")
     ledger = None
     try:
         load_cases()
@@ -439,7 +534,7 @@ def main(argv: list[str] | None = None) -> int:
             report = asyncio.run(run_comparison(args.mode, key, ledger,
                 list(dict.fromkeys(args.model or RATES)), args.rounds,
                 trust_environment_proxy=args.trust_environment_proxy if args.mode == "live" else False,
-                transport=httpx.MockTransport(mock_response) if args.mode == "mock" else None))
+                transport=httpx.MockTransport(mock_response) if args.mode == "mock" else None, scope=args.scope))
         if args.output:
             write_private_json(args.output, report, exclusive=True)
         print(json.dumps(report, ensure_ascii=False, indent=2))

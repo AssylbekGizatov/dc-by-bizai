@@ -203,7 +203,7 @@
       section('История решений', h('div', { id: 'q-history' })));
     const summary = box.querySelector('.summary');
     const blocks = [...box.querySelectorAll(':scope > .block')];
-    const textBlock = blocks[0], rulesBlock = blocks[1], draftBlock = blocks[2];
+    const textBlock = blocks[0], rulesBlock = blocks[1], draftBlock = blocks[2], historyBlock = blocks[3];
     const overview = h('div', { class: 'case-overview queue-overview' },
       h('div', null, h('span', { class: 'overview-label' }, 'Категория'), h('strong', null, L.CATEGORIES[r.category] || r.category)),
       h('div', null, h('span', { class: 'overview-label' }, 'Приоритет'), h('strong', null, prio(r.priority), ' ', L.PRIORITIES[r.priority])));
@@ -213,7 +213,8 @@
     summary.remove();
     const sourcePane=h('div',{class:'source-pane'},textBlock,rulesBlock);
     const responsePane=h('div',{class:'response-pane'},draftBlock);
-    box.querySelector('.meta-line').after(overview,decision,h('div',{class:'case-body'},sourcePane,responsePane));
+    const jumps = UI.sectionJumps('Разделы обращения', [[textBlock,'Текст'],[rulesBlock,'Правила'],[draftBlock,'Ответ'],[historyBlock,'История']]);
+    box.querySelector('.meta-line').after(jumps,overview,decision,h('div',{class:'case-body'},sourcePane,responsePane));
     draftBlock.classList.add('reply-block');
     const toolbar = draftBlock.querySelector('.actions');
     if (toolbar && !state.escalating) toolbar.classList.add('editor-toolbar');

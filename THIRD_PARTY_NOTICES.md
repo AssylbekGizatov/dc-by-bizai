@@ -16,6 +16,9 @@
 | TypeScript | Проверка типов | [Apache-2.0](https://github.com/microsoft/TypeScript/blob/main/LICENSE.txt) |
 | Vite / Vitest | Сборка и UI tests | [Vite MIT](https://github.com/vitejs/vite/blob/main/LICENSE), [Vitest MIT](https://github.com/vitest-dev/vitest/blob/main/LICENSE.md) |
 | pytest | Backend tests | [MIT](https://github.com/pytest-dev/pytest/blob/main/LICENSE) |
+| Playwright Test 1.64.1 | Браузерные E2E с настоящим API | [Apache-2.0](https://github.com/microsoft/playwright/blob/main/LICENSE) |
+| @axe-core/playwright 4.14.0 | Автоматическая проверка доступности в браузере | [MPL-2.0](https://github.com/dequelabs/axe-core-npm/blob/develop/LICENSE) |
+| Impeccable 4.8.0, engine 0.1.18 | Инструмент дизайна при разработке; не runtime приложения | [Apache-2.0](https://github.com/pbakaus/impeccable/blob/main/LICENSE) |
 | sentence-transformers | Только optional local encoder | [Apache-2.0](https://github.com/huggingface/sentence-transformers/blob/master/LICENSE) |
 | PyTorch CPU | Только optional local encoder | [BSD-style и bundled third-party notices](https://github.com/pytorch/pytorch/blob/main/LICENSE) |
 | Transformers | Только optional local encoder | [Apache-2.0](https://github.com/huggingface/transformers/blob/main/LICENSE) |

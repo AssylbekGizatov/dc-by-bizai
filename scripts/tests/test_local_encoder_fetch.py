@@ -78,7 +78,12 @@ def test_existing_invalid_file_is_not_overwritten(tmp_path):
 def test_symlink_escape_is_rejected(tmp_path):
     root = tmp_path / "model"
     root.mkdir()
-    (root / "1_Pooling").symlink_to(tmp_path, target_is_directory=True)
+    try:
+        (root / "1_Pooling").symlink_to(tmp_path, target_is_directory=True)
+    except OSError as exc:
+        if getattr(exc, 'winerror', None) == 1314:
+            pytest.skip('Windows account lacks symlink creation privilege; containment tests still run')
+        raise
     with pytest.raises(ValueError):
         fetch.safe_target(root, "1_Pooling/config.json")
 

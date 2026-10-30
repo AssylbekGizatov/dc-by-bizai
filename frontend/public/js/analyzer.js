@@ -42,10 +42,19 @@
     return code;
   }
   function ruleNode(c) {
-    return h('li', null, h('div', { class: 'rule-heading' }, h('b', null, c.ref ? 'Пункт ' + c.ref : ruleLabel(c.code)),
-      h('span', { class: 'rule-id' }, c.id || c.code), c.synthetic || String(c.code).startsWith('demo:') ? h('span', { class: 'synthetic' }, 'Синтетический пример') : null),
+    return h('li', null, h('div', { class: 'rule-heading' }, h('b', null, c.ref ? 'Пункт ' + c.ref : ruleLabel(mvpCode(c.code))),
+      c.synthetic || String(c.code).startsWith('demo:') ? h('span', { class: 'synthetic' }, 'Синтетический пример') : null),
       c.title ? h('b', null, c.title + '. ') : null, h('span', null, c.text || ''),
       c.section ? h('span', { class: 'rule-section' }, 'Раздел: ' + c.section) : null);
+  }
+  function sectionJumps(label, sections) {
+    return h('nav', { class: 'section-jumps', 'aria-label': label }, sections.map(([block, name]) =>
+      h('button', { type: 'button', onclick: () => {
+        block.scrollIntoView({ block: 'start' });
+        const heading = block.querySelector('h3');
+        heading.setAttribute('tabindex', '-1');
+        heading.focus({ preventScroll: true });
+      } }, name)));
   }
 
   // Same-origin API only. A bearer token exists solely in this closure, never browser storage.
@@ -304,7 +313,7 @@
     const verdict = root.querySelector('.analysis-verdict'); if (verdict) verdict.remove();
     const sourcePane = h('div', { class: 'source-pane' }, textBlock, factsBlock, rulesBlock, diagnostics);
     const responsePane = h('div', { class: 'response-pane' }, draftBlock);
-    const jumps = h('nav',{class:'section-jumps','aria-label':'Разделы разбора'},[[textBlock,'Текст'],[factsBlock,'Сведения'],[rulesBlock,'Правила'],[draftBlock,'Ответ']].map(([block,label])=>h('button',{type:'button',onclick:()=>{block.scrollIntoView({block:'start'});const heading=block.querySelector('h3');heading.setAttribute('tabindex','-1');heading.focus({preventScroll:true});}},label)));
+    const jumps = sectionJumps('Разделы разбора', [[textBlock,'Текст'],[factsBlock,'Сведения'],[rulesBlock,'Правила'],[draftBlock,'Ответ']]);
     root.querySelector('.section-heading').after(jumps,overview, decision, h('div', { class: 'analysis-body' }, sourcePane, responsePane));
     draftBlock.classList.add('reply-block');
     const draftHint = draftBlock.querySelector('p'); if (draftHint) draftHint.textContent = 'Редактирование здесь — для копирования. Чтобы сохранить правки, откройте обращение в очереди.';
@@ -355,6 +364,6 @@
   window.addEventListener('beforeunload', e => { if (submitting || intakeDirty || history.some(x => x.out.copyDraft != null && x.out.copyDraft !== x.out.result.draft_reply.text)) { e.preventDefault(); e.returnValue=''; } });
 
   // Общие помощники для очереди админа (queue.js).
-  window.SC.ui = { h, pf, mvpCode, ruleLabel, ruleNode, generationLabel, api, HTTP_ERRORS, mode: () => mode, rules: () => rules,
+  window.SC.ui = { h, pf, mvpCode, ruleLabel, ruleNode, sectionJumps, generationLabel, api, HTTP_ERRORS, mode: () => mode, rules: () => rules,
     ready: detect().then(renderMode) };
 })();
