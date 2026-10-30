@@ -11,8 +11,8 @@
 | NumPy | Вычисления retrieval | [BSD-3-Clause и bundled notices](https://github.com/numpy/numpy/blob/main/LICENSE.txt) |
 | scikit-learn | Символьный TF-IDF | [BSD-3-Clause](https://github.com/scikit-learn/scikit-learn/blob/main/COPYING) |
 | rank-bm25 | Лексический retrieval | [Apache-2.0](https://github.com/dorianbrown/rank_bm25/blob/master/LICENSE) |
-| React / React DOM | Интерфейс | [MIT](https://github.com/facebook/react/blob/main/LICENSE) |
-| Lucide | Иконки | [ISC, с указанными upstream notices](https://github.com/lucide-icons/lucide/blob/main/LICENSE) |
+| IBM Plex Sans (`@fontsource-variable/ibm-plex-sans` 5.3.0) | Локально размещённый variable-шрифт интерфейса | [SIL OFL-1.1](frontend/public/licenses/ibm-plex-sans-OFL.txt) |
+| DOM Testing Library | DOM-интеграционные тесты vanilla-интерфейса | [MIT](https://github.com/testing-library/dom-testing-library/blob/main/LICENSE) |
 | TypeScript | Проверка типов | [Apache-2.0](https://github.com/microsoft/TypeScript/blob/main/LICENSE.txt) |
 | Vite / Vitest | Сборка и UI tests | [Vite MIT](https://github.com/vitejs/vite/blob/main/LICENSE), [Vitest MIT](https://github.com/vitest-dev/vitest/blob/main/LICENSE.md) |
 | pytest | Backend tests | [MIT](https://github.com/pytest-dev/pytest/blob/main/LICENSE) |
@@ -22,6 +22,10 @@
 | SentencePiece | Только optional tokenizer | [Apache-2.0](https://github.com/google/sentencepiece/blob/master/LICENSE) |
 
 Точные frontend-версии и транзитивные зависимости зафиксированы `frontend/package-lock.json`; Python ranges находятся в `backend/requirements*.txt`, а проверенное разрешение runtime/test зависимостей — в `constraints.txt` (Python 3.12, Linux). `make setup` и Docker используют эти constraints. Проверенные optional encoder versions находятся в `constraints-models.txt`; CPU PyTorch устанавливается с официального индекса по инструкции README. Для воспроизводимого пилота также зафиксируйте digest базовых Docker-образов после проверки.
+
+## Шрифт интерфейса
+
+IBM Plex Sans: Copyright 2019 IBM Corp. Полный copyright notice и SIL Open Font License 1.1 из установленного пакета сохранены без изменений в [`frontend/public/licenses/ibm-plex-sans-OFL.txt`](frontend/public/licenses/ibm-plex-sans-OFL.txt). Vite копирует файл в `dist/licenses/`, поэтому он сохраняется и в контейнерной сборке. Шрифт размещается вместе с приложением; запросы к внешнему font CDN не нужны. При распространении сборки сохраняйте этот notice и полную лицензию шрифта.
 
 ## Модели и внешние сервисы
 

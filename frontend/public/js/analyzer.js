@@ -6,6 +6,8 @@
   const $ = (s) => document.querySelector(s);
   let rules = new Map(window.SC.demo.RULES.map((r) => [r.code, r]));
   let mode = 'demo';
+  let token = '', authRequired = false, submitting = false;
+  const intakeKeys = new Map();
 
   function h(tag, props) {
     const el = document.createElement(tag);
@@ -27,39 +29,74 @@
   }
   const pf = new Intl.NumberFormat('ru-RU', { style: 'percent', maximumFractionDigits: 0 });
   const mvpCode = (id) => { const m = /^(\d+):(.+)$/.exec(String(id || '')); if (!m) return String(id || ''); return m[1] === '31' ? 'ЖБ ' + m[2] : m[1] === '32' ? 'GZ ' + m[2] : m[2]; };
-  const ruleLabel = (code) => (/^\d/.test(code) ? code + ' ОП' : code);
+  const ruleLabel = (code) => (/^\d/.test(code) ? 'Пункт ' + code : code);
   // Сервис цитирует points[].ref («2.1»), а пункт однозначно задаёт внутренний id («31:2.1» -> «ЖБ 2.1»).
   // Правило кладём под обоими ключами, чтобы находить его и по цитате, и по номеру в тексте черновика.
   function addRule(c) {
-    const code = mvpCode(c.id || c.ref);
-    const rule = { code, title: String(c.title || '').replace(/\s·\s.*$/, ''), text: c.text || '', section: c.section || '' };
-    if (!rules.has(code)) rules.set(code, rule);
+    const code = c.id || c.ref;
+    const rule = { code, id: c.id || code, ref: c.ref, title: String(c.title || ''), text: c.text || '', section: c.section || '', synthetic: !!c.synthetic };
+    rules.set(code, rule);
+    // Bare refs in the teammate API remain supported, canonical IDs stay intact for provenance.
     if (c.ref && c.ref !== 'section' && !rules.has(c.ref)) rules.set(c.ref, rule);
     return code;
   }
+  function ruleNode(c) {
+    return h('li', null, h('div', { class: 'rule-heading' }, h('b', null, c.ref ? 'Пункт ' + c.ref : ruleLabel(c.code)),
+      h('span', { class: 'rule-id' }, c.id || c.code), c.synthetic || String(c.code).startsWith('demo:') ? h('span', { class: 'synthetic' }, 'Синтетический пример') : null),
+      c.title ? h('b', null, c.title + '. ') : null, h('span', null, c.text || ''),
+      c.section ? h('span', { class: 'rule-section' }, 'Раздел: ' + c.section) : null);
+  }
 
-  // ---------- подключение ----------
+  // Same-origin API only. A bearer token exists solely in this closure, never browser storage.
+  async function api(path, options = {}) {
+    const ctrl = new AbortController();
+    const timeout = setTimeout(() => ctrl.abort(), 45000);
+    let res;
+    try {
+      const headers = Object.assign({}, options.headers || {}, token ? { Authorization: 'Bearer ' + token } : {});
+      res = await fetch(path, Object.assign({}, options, { headers, signal: ctrl.signal }));
+    } catch (e) {
+      throw new Error(e.name === 'AbortError' ? 'Сервис не успел ответить. Повторите запрос; ваши данные остались на месте.' : 'Нет связи с API. Проверьте подключение и повторите запрос.');
+    } finally { clearTimeout(timeout); }
+    if (!res.ok) {
+      const error = new Error(HTTP_ERRORS[res.status] || 'Сервис вернул ошибку ' + res.status + '.');
+      error.conflict = res.status === 409;
+      if (res.status === 429) error.message = 'Лимит запросов. Повторите через ' + (Number(res.headers.get('Retry-After')) || 60) + ' сек.';
+      throw error;
+    }
+    return res.json();
+  }
   async function detect() {
     if (location.protocol === 'file:' || /[?&]demo=1\b/.test(location.search)) return;
+    const ctrl = new AbortController(); const timeout = setTimeout(() => ctrl.abort(), 2500);
     try {
-      const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), 2500);
-      const r = await fetch('/api/health', { signal: ctrl.signal }); clearTimeout(t);
-      if (!r.ok) return;
-      mode = 'live';
-      const rr = await fetch('/api/rules');
-      if (rr.ok) {
-        const d = await rr.json();
-        if ((d.items || []).length) { rules = new Map(); d.items.forEach(addRule); }
-      }
-    } catch (e) { mode = 'demo'; }
+      const response = await fetch('/api/health', { signal: ctrl.signal });
+      if (!response.ok) return;
+      const health = await response.json();
+      mode = 'live'; authRequired = !!health.auth_required;
+      try { const d = await api('/api/rules'); if ((d.items || []).length) { rules = new Map(); d.items.forEach(addRule); } } catch (_) { /* Protected API stays live and asks for its token. */ }
+    } catch (_) { mode = 'demo'; } finally { clearTimeout(timeout); }
   }
   function renderMode() {
-    $('#mode').textContent = mode === 'live' ? 'Подключено к API' : 'Демо-режим';
+    $('#mode').textContent = mode === 'live' ? authRequired && !token ? 'API · нужен токен' : 'API подключён' : 'Демо в браузере';
     $('#mode').className = 'mode ' + mode;
     $('#foot-mode').textContent = mode === 'live'
-      ? 'Анализ выполняет сервис (тот же конвейер, что POST /triage). Каждое обращение попадает в очередь админа.'
-      : 'Демо-режим: анализ в браузере по ключевым словам и демо-формулировкам правил, очередь хранится только в этой вкладке. Настоящий анализ — через API.';
+      ? 'Обращения и правки сохраняются в API. Отправка только имитируется — связи с игрой нет.'
+      : 'Локальная демонстрация: синтетические правила, анализ по ключевым словам. Очередь хранится только в памяти этой вкладки.';
   }
+  document.querySelector('.skip-link').addEventListener('click', e => { e.preventDefault(); const main = document.querySelector('main:not([hidden])'); main.setAttribute('tabindex', '-1'); main.focus(); });
+  const dialog = $('#connection-dialog');
+  $('#connection-open').addEventListener('click', () => { $('#api-token').value = ''; $('#connection-status').textContent = token ? 'Токен установлен в этой вкладке.' : ''; dialog.showModal(); });
+  $('#connection-close').addEventListener('click', () => dialog.close());
+  $('#connection-clear').addEventListener('click', () => { token = ''; $('#api-token').value = ''; $('#connection-status').textContent = 'Токен удалён.'; renderMode(); });
+  $('#connection-form').addEventListener('submit', async (e) => {
+    e.preventDefault(); const button = e.submitter || $('#connection-form .primary'); if (button.disabled) return;
+    token = $('#api-token').value.trim(); $('#api-token').value = ''; button.disabled = true;
+    $('#connection-status').textContent = 'Проверяем доступ…';
+    try { const d = await api('/api/rules'); mode = 'live'; if (d.items) { rules = new Map(); d.items.forEach(addRule); } $('#connection-status').textContent = 'Доступ подтверждён. Можно вернуться к работе.'; }
+    catch (err) { $('#connection-status').textContent = err.message; }
+    finally { button.disabled = false; renderMode(); }
+  });
 
   // ---------- анализ ----------
   async function analyze(input) {
@@ -69,11 +106,10 @@
       // POST /api/tickets запускает тот же конвейер, что /triage, и сохраняет обращение в очередь админа.
       const body = { kind: input.kind, text: input.text, attachments_count: input.attachments, server_lang: input.server_lang };
       if (input.player) body.player_id = input.player;
-      let res;
-      try { res = await fetch('/api/tickets', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); }
-      catch (e) { throw new Error('Сервис не отвечает. Проверьте, что API запущен.'); }
-      if (!res.ok) throw new Error(HTTP_ERRORS[res.status] || 'Сервис вернул ошибку ' + res.status + '.');
-      const ticket = await res.json();
+      const fingerprint = JSON.stringify(body);
+      if (!intakeKeys.has(fingerprint)) { if (intakeKeys.size >= 50) intakeKeys.delete(intakeKeys.keys().next().value); intakeKeys.set(fingerprint, crypto.randomUUID()); }
+      const ticket = await api('/api/tickets', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Idempotency-Key': intakeKeys.get(fingerprint) }, body: fingerprint });
+      intakeKeys.delete(fingerprint);
       ticketId = ticket.id;
       found = (ticket.citations || []).filter((c) => c.ref !== 'section').map(addRule);
       raw = ticket.result;
@@ -93,7 +129,7 @@
     return { result, raw, citations, ticketId, ms: performance.now() - t0 };
   }
   const HTTP_ERRORS = {
-    401: 'API требует токен (задан API_TOKEN). Для проверки страницы запустите сервис без API_TOKEN.',
+    401: 'Нужен действующий токен. Откройте «Подключение к API» в правом верхнем углу.',
     403: 'API отклонил запрос с этого адреса. Откройте страницу с того же адреса, что и API.',
     413: 'Текст слишком длинный для API.',
     422: 'API не принял обращение: проверьте текст и поля формы.',
@@ -131,13 +167,14 @@
       const mandatory = L.MANDATORY_HUMAN.has(r.category);
       r.is_spam_or_duplicate = true;
       r.priority = 'p3';
-      r.needs_human = mandatory;
+      r.needs_human = r.needs_human || mandatory;
       r.reasons = ['Повтор обращения №' + dup.n + ': тот же игрок, та же проблема, ' + ago].concat(mandatory ? ['Эту категорию всегда решает человек'] : []);
       r.draft_reply = { lang: r.lang, text: DUP_TEXT[r.lang] || DUP_TEXT.en, cited: [] };
       r.confidence = 0.9;
     }
     if (recent.length + 1 > FLOOD_LIMIT) {
       r.is_spam_or_duplicate = true;
+      r.needs_human = true;
       r.reasons.push('Флуд: ' + (recent.length + 1) + '-е обращение этого игрока за час (лимит ' + FLOOD_LIMIT + ')');
     }
   }
@@ -183,7 +220,7 @@
     const drawQuote = () => { quote.replaceChildren(highlight(showRaw ? input.text : norm.text, facts)); };
     drawQuote();
 
-    const draft = h('textarea', { class: 'draft', rows: '6', 'aria-label': 'Черновик ответа игроку' });
+    const draft = h('textarea', { class: 'draft', rows: '6', maxlength: '5000', 'aria-label': 'Черновик ответа игроку' });
     draft.value = r.draft_reply.text;
     const checks = h('ul', { class: 'checks' });
     const drawChecks = () => {
@@ -197,36 +234,39 @@
     const section = (title, ...kids) => h('section', { class: 'block' }, h('h3', null, title), kids);
 
     $('#out').replaceChildren(
-      h('h2', { id: 'out-h' }, n ? 'Результат анализа, обращение №' + n : 'Результат анализа'),
+      h('div', { class: 'section-heading' }, h('span', { class: 'section-no' }, '02'), h('h2', { id: 'out-h' }, 'Разбор обращения'), h('span', { class: 'doc-tag' }, n ? 'В сессии №' + n : 'Готово')),
+      h('p', { class: 'analysis-verdict' }, h('span', { class: r.needs_human ? 'human' : 'auto' }, r.needs_human ? 'На проверку специалисту' : 'Черновик готов к проверке')),
       h('table', { class: 'summary' }, h('tbody', null,
         h('tr', null, h('th', null, 'Язык'), h('td', null, L.LANGS[r.lang] || r.lang, norm.changed ? h('span', { class: 'note' }, ` (исправлено ${norm.changed} симв. cp1251)`) : null)),
         h('tr', null, h('th', null, 'Категория'), h('td', null, L.CATEGORIES[r.category] || r.category, h('code', null, r.category))),
         h('tr', null, h('th', null, 'Приоритет'), h('td', null, h('span', { class: 'prio ' + r.priority }, r.priority.toUpperCase()), ' ', L.PRIORITIES[r.priority])),
         h('tr', null, h('th', null, 'Спам или повтор'), h('td', null, r.is_spam_or_duplicate ? 'Да' : 'Нет')),
-        h('tr', null, h('th', null, 'Кто отвечает'), h('td', null, h('b', { class: r.needs_human ? 'human' : 'auto' }, r.needs_human ? 'Нужен человек' : 'Можно ответить сразу'),
+        h('tr', null, h('th', null, 'Кто отвечает'), h('td', null, h('b', { class: r.needs_human ? 'human' : 'auto' }, r.needs_human ? 'Нужен человек' : 'Стандартная проверка'),
           r.reasons.length ? h('ul', { class: 'reasons' }, r.reasons.map((x) => h('li', null, x))) : null)),
-        h('tr', null, h('th', null, 'Уверенность'), h('td', null, pf.format(r.confidence))))),
+        h('tr', null, h('th', null, 'Оценка алгоритма'), h('td', null, pf.format(r.confidence), h('span', { class: 'note small' }, ' · не измеренная точность'))))),
 
       section('Текст игрока', quote,
         norm.changed ? h('button', { type: 'button', class: 'link', onclick: (e) => { showRaw = !showRaw; drawQuote(); e.target.textContent = showRaw ? 'Показать исправленный текст' : 'Показать как написал игрок'; } }, 'Показать как написал игрок') : null),
 
-      section('Что извлечено из текста',
+      section('Факты и происхождение',
         h('table', { class: 'facts' }, h('thead', null, h('tr', null, h('th', null, 'Поле'), h('th', null, 'Значение'), h('th', null, 'Откуда'))),
           h('tbody', null, facts.map((f) => {
-            const tr = h('tr', { 'data-fact': f.key }, h('td', null, h('i', { class: 'dot f-' + f.key }), FACT_LABEL[f.key]), h('td', null, f.value || '—'), h('td', { class: 'muted' }, f.source));
+            const tr = h('tr', { 'data-fact': f.key, tabindex: '0' }, h('td', null, h('i', { class: 'dot f-' + f.key }), FACT_LABEL[f.key]), h('td', null, f.value || '—'), h('td', { class: 'muted' }, f.source));
             tr.addEventListener('mouseenter', () => quote.querySelectorAll('[data-fact="' + f.key + '"]').forEach((m) => m.classList.add('on')));
             tr.addEventListener('mouseleave', () => quote.querySelectorAll('mark.on').forEach((m) => m.classList.remove('on')));
+            tr.addEventListener('focus', () => quote.querySelectorAll('[data-fact="' + f.key + '"]').forEach((m) => m.classList.add('on')));
+            tr.addEventListener('blur', () => quote.querySelectorAll('mark.on').forEach((m) => m.classList.remove('on')));
             return tr;
           })))),
 
-      section('Найденные правила (RAG)',
+      section('Основание ответа',
         out.citations.length ? h('ul', { class: 'rules' }, out.citations.map((c) => {
           const rule = rules.get(c) || {};
-          return h('li', null, h('b', null, ruleLabel(c)), rule.title ? ' ' + rule.title + '. ' : ' ', h('span', null, rule.text || ''));
+          return ruleNode(Object.assign({ code: c }, rule));
         })) : h('p', { class: 'muted' }, 'Для этой категории правила не нужны или подходящий пункт не найден.'),
-        missingRefs.length ? h('p', { class: 'warn' }, 'Игрок указал ' + missingRefs.join(', ') + ' — такого пункта нет в правилах, в ответе его не цитируем.') : null),
+        missingRefs.length ? h('p', { class: 'warn' }, 'Игрок указал ' + missingRefs.join(', ') + ' — пункт не найден в загруженной базе. Не используйте его без проверки раздела.') : null),
 
-      section('Черновик ответа игроку', draft, checks,
+      section('Черновик ответа', h('p', { class: 'small muted' }, 'Проверьте формулировку. Изменения здесь не сохраняются в очередь — используйте «Открыть в очереди» для правок.'), draft, checks,
         h('button', { type: 'button', class: 'secondary', onclick: async (e) => {
           try { await navigator.clipboard.writeText(draft.value); e.target.textContent = 'Скопировано'; } catch (x) { draft.select(); e.target.textContent = 'Выделено, нажмите Ctrl+C'; }
           setTimeout(() => { e.target.textContent = 'Скопировать ответ'; }, 2000);
@@ -236,6 +276,22 @@
 
       h('details', { class: 'json' }, h('summary', null, out.raw ? 'Ответ сервиса как есть (JSON, формат /triage)' : 'Ответ в формате API (JSON)'), h('pre', null, JSON.stringify(json, null, 2))),
       h('p', { class: 'muted small' }, (mode === 'live' ? 'Ответ сервиса' : 'Демо-анализ в браузере') + ' за ' + Math.max(1, Math.round(out.ms)) + ' мс.'));
+    const root = $('#out');
+    const summary = root.querySelector('.summary');
+    const blocks = [...root.querySelectorAll(':scope > .block')];
+    const textBlock = blocks[0], factsBlock = blocks[1], rulesBlock = blocks[2], draftBlock = blocks[3];
+    const overview = h('div', { class: 'case-overview' },
+      h('div', null, h('span', { class: 'overview-label' }, 'Категория'), h('strong', null, L.CATEGORIES[r.category] || r.category)),
+      h('div', null, h('span', { class: 'overview-label' }, 'Приоритет'), h('strong', null, h('span', { class: 'prio ' + r.priority }, r.priority.toUpperCase()), ' ', L.PRIORITIES[r.priority])),
+      h('div', null, h('span', { class: 'overview-label' }, 'Язык'), h('strong', null, L.LANGS[r.lang] || r.lang)));
+    const decision = h('details', { class: 'decision', open: r.needs_human }, h('summary', null, r.needs_human ? 'Нужен человек — причины' : 'Стандартная проверка'),
+      r.reasons.length ? h('ul', { class: 'reasons' }, r.reasons.map(x => h('li', null, x))) : h('p', { class: 'small muted' }, 'Проверьте ответ перед использованием.'));
+    const diagnostics = h('details', { class: 'document-details' }, h('summary', null, 'Параметры анализа и извлечённые факты'), summary, factsBlock);
+    const verdict = root.querySelector('.analysis-verdict'); if (verdict) verdict.remove();
+    root.querySelector('.section-heading').after(overview, textBlock, decision, draftBlock, rulesBlock, diagnostics);
+    draftBlock.classList.add('reply-block');
+    const draftHint = draftBlock.querySelector('p'); if (draftHint) draftHint.textContent = 'Редактирование здесь — для копирования. Чтобы сохранить правки, откройте обращение в очереди.';
+
   }
 
   // ---------- форма ----------
@@ -244,20 +300,24 @@
     { label: 'Пустая жалоба', kind: 'complaint', server_lang: 'ru', attachments: 1, text: 'жб' },
   ]);
   SAMPLES.forEach((s) => $('#examples').append(h('button', { type: 'button', onclick: () => {
+    if (submitting) return;
     document.querySelector(`input[name=kind][value=${s.kind}]`).checked = true;
-    $('#text').value = s.text; $('#att').value = s.attachments; $('#srv').value = s.server_lang;
+    $('#text').value = '[Синтетический пример] ' + s.text; $('#att').value = s.attachments; $('#srv').value = s.server_lang;
     $('#form').requestSubmit();
   } }, s.label)));
 
   $('#form').addEventListener('submit', async (e) => {
     e.preventDefault();
+    if (submitting) return;
     const err = $('#form-error');
     const input = { kind: document.querySelector('input[name=kind]:checked').value, text: $('#text').value.trim(), player: $('#player').value.trim(),
       attachments: Math.max(0, Number($('#att').value) || 0), server_lang: $('#srv').value };
     if (!input.text) { err.hidden = false; err.textContent = 'Введите текст обращения.'; $('#text').focus(); return; }
-    err.hidden = true;
+    if (input.attachments > 50 || !Number.isInteger(input.attachments)) { err.hidden = false; err.textContent = 'Количество скриншотов: целое число от 0 до 50.'; $('#att').focus(); return; }
+    err.hidden = true; submitting = true;
     const btn = $('#go'); btn.disabled = true; btn.textContent = 'Анализируем…';
     try {
+      await window.SC.ui.ready;
       const out = await analyze(input);
       const entry = { n: history.length + 1, at: Date.now(), input, out };
       history.push(entry);
@@ -265,10 +325,10 @@
       if (window.innerWidth < 900) $('#out').scrollIntoView({ block: 'start' });
     }
     catch (x) { err.hidden = false; err.textContent = x.message; }
-    finally { btn.disabled = false; btn.textContent = 'Проанализировать'; }
+    finally { submitting = false; btn.disabled = false; btn.textContent = 'Проанализировать'; }
   });
 
   // Общие помощники для очереди админа (queue.js).
-  window.SC.ui = { h, pf, mvpCode, ruleLabel, HTTP_ERRORS, mode: () => mode, rules: () => rules,
+  window.SC.ui = { h, pf, mvpCode, ruleLabel, ruleNode, api, HTTP_ERRORS, mode: () => mode, rules: () => rules,
     ready: detect().then(renderMode) };
 })();

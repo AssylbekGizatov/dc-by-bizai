@@ -4,87 +4,60 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex, nofollow">
-  <meta name="description" content="Grand Mobile Support Copilot: анализ обращения игрока — язык, категория, приоритет, правила и черновик ответа.">
-  <title>Анализ обращений · Support Copilot</title>
+  <meta name="description" content="Рабочее место поддержки Grand Mobile: анализ обращений, проверка правил и очередь администратора.">
+  <title>Grand Mobile — рабочее место поддержки</title>
   <link rel="icon" type="image/svg+xml" href="/assets/logo.svg">
+  <link rel="stylesheet" href="/src/font.css">
   <link rel="stylesheet" href="/analyzer.css">
 </head>
 <body>
+  <a class="skip-link" href="#workspace">К рабочему месту</a>
   <header class="top">
     <div class="wrap top-in">
-      <img class="logo" src="/assets/logo.svg" width="32" height="32" alt="">
-      <div class="title"><b>Support Copilot</b><span>Обращения игроков Grand Mobile</span></div>
+      <a class="brand" href="#" aria-label="Grand Mobile — анализ обращений"><img src="/assets/logo.svg" width="34" height="34" alt=""><span>GRAND MOBILE<small>Рабочее место поддержки</small></span></a>
       <nav class="nav" aria-label="Разделы">
-        <a href="#" data-view="analyze" aria-current="true">Анализ</a>
-        <a href="#queue" data-view="queue">Очередь админа</a>
+        <a href="#" data-view="analyze" aria-current="true">Анализ обращения</a>
+        <a href="#queue" data-view="queue">Очередь администратора</a>
       </nav>
-      <span class="mode" id="mode">Проверяем подключение…</span>
+      <button class="connection" id="connection-open" type="button" aria-haspopup="dialog"><span id="mode" class="mode">Подключаемся…</span><span class="arrow" aria-hidden="true"></span></button>
     </div>
   </header>
-
-  <main class="wrap grid" id="view-analyze">
-    <section class="panel" aria-labelledby="in-h">
-      <h1 id="in-h">Обращение игрока</h1>
+  <div id="workspace" tabindex="-1"></div>
+  <main class="wrap analyze-layout" id="view-analyze">
+    <div class="page-heading"><div><p class="eyebrow">Поддержка игроков / анализ</p><h1>Анализ обращения</h1></div><p class="page-caption">От исходного текста до проверенного ответа.</p></div>
+    <section class="intake" aria-labelledby="in-h">
+      <div class="section-heading"><span class="section-no">01</span><h2 id="in-h">Новое обращение</h2></div>
       <form id="form" novalidate>
-        <fieldset class="kind">
-          <legend>Откуда пришло</legend>
-          <label><input type="radio" name="kind" value="complaint" checked> Жалоба из лаунчера</label>
-          <label><input type="radio" name="kind" value="report"> Репорт из игры</label>
+        <fieldset class="kind"><legend>Источник</legend>
+          <label><input type="radio" name="kind" value="complaint" checked><span>Жалоба<small>Из лаунчера</small></span></label>
+          <label><input type="radio" name="kind" value="report"><span>Репорт<small>Из игры</small></span></label>
         </fieldset>
-        <label class="field">
-          <span>Текст игрока</span>
-          <textarea id="text" rows="6" maxlength="4000" placeholder="Вставьте текст как есть, с опечатками и заменами символов"></textarea>
-        </label>
-        <label class="field">
-          <span>ID игрока <small>(необязательно, нужен для поиска повторов)</small></span>
-          <input id="player" type="text" maxlength="64" autocomplete="off" placeholder="Например, player_42">
-        </label>
+        <label class="field"><span>Текст игрока</span><textarea id="text" rows="7" maxlength="4000" placeholder="Вставьте обращение как есть — с опечатками и заменами символов."></textarea></label>
+        <label class="field"><span>ID игрока <small>необязательно</small></span><input id="player" type="text" maxlength="64" autocomplete="off" placeholder="Для поиска повторных обращений"></label>
         <div class="row2">
-          <label class="field"><span>Скриншотов приложено</span><input id="att" type="number" min="0" max="50" value="0" inputmode="numeric"></label>
-          <label class="field"><span>Язык сервера</span>
-            <select id="srv">
-              <option value="ru">Русский</option><option value="kk">Казахский</option><option value="uz">Узбекский</option>
-              <option value="en">Английский</option><option value="es">Испанский</option><option value="pt">Португальский</option>
-            </select>
-          </label>
+          <label class="field"><span>Скриншотов</span><input id="att" type="number" min="0" max="50" value="0" inputmode="numeric"></label>
+          <label class="field"><span>Язык сервера</span><select id="srv"><option value="ru">Русский</option><option value="kk">Казахский</option><option value="uz">Узбекский</option><option value="en">Английский</option><option value="es">Испанский</option><option value="pt">Португальский</option></select></label>
         </div>
-        <div class="examples" id="examples"><span>Примеры:</span></div>
+        <p class="field-hint">Передаётся только количество вложений. Их содержимое не анализируется.</p>
         <p class="error" id="form-error" role="alert" hidden></p>
-        <button class="primary" type="submit" id="go">Проанализировать</button>
+        <div class="intake-action"><button class="primary" type="submit" id="go">Проанализировать <span class="arrow" aria-hidden="true"></span></button><span>Сохранится в очереди при подключении к API</span></div>
       </form>
-      <div class="history" id="history" hidden>
-        <h2>Проверенные обращения</h2>
-        <ul id="history-list"></ul>
-      </div>
+      <details class="sample-drawer"><summary>Попробовать на синтетическом примере</summary><p class="small muted">Вымышленные обращения, не данные игроков.</p><div class="examples" id="examples"></div></details>
+      <div class="history" id="history" hidden><h2>В этой сессии</h2><ul id="history-list"></ul></div>
     </section>
-
-    <section class="panel" id="out" aria-labelledby="out-h" aria-live="polite">
-      <h2 id="out-h">Результат анализа</h2>
-      <div class="empty">
-        <p>Вставьте обращение или выберите пример и нажмите «Проанализировать». Система:</p>
-        <ol>
-          <li>определит язык, категорию и приоритет;</li>
-          <li>достанет из текста ник, пункт правил, доказательства и сервер;</li>
-          <li>найдёт подходящие пункты правил;</li>
-          <li>подготовит черновик ответа и проверит его;</li>
-          <li>скажет, можно ли ответить сразу или нужен человек.</li>
-        </ol>
-      </div>
+    <section class="document" id="out" aria-labelledby="out-h" aria-live="polite">
+      <div class="section-heading"><span class="section-no">02</span><h2 id="out-h">Разбор обращения</h2><span class="doc-tag">Ожидает текст</span></div>
+      <div class="empty-document"><span class="empty-index" aria-hidden="true"></span><h3>Разбор появится здесь.</h3><p>Добавьте обращение слева. Здесь появятся разбор, найденные правила и черновик для проверки.</p><ol><li><span>01</span>Язык, категория и приоритет</li><li><span>02</span>Факты из текста и источники</li><li><span>03</span>Черновик без автоматической отправки</li></ol></div>
+      <p class="document-footnote">Обвинение игрока — не подтверждённое нарушение. Решения о санкциях, платежах и доступе принимает специалист.</p>
     </section>
   </main>
-
-  <main class="wrap grid" id="view-queue" hidden>
-    <section class="panel" id="q-list" aria-label="Список обращений"></section>
-    <section class="panel" id="q-detail" aria-live="polite"></section>
+  <main class="wrap queue-layout" id="view-queue" hidden>
+    <div class="page-heading"><div><p class="eyebrow">Поддержка игроков / проверка</p><h1>Очередь администратора</h1></div><p class="page-caption">Один контекст. Один ответ.<br>Каждая правка сохраняется.</p></div>
+    <section id="q-list" aria-label="Список обращений"></section>
+    <section class="document" id="q-detail" aria-live="polite"></section>
   </main>
-
-  <footer class="wrap foot">
-    <span id="foot-mode"></span>
-  </footer>
-
-  <script src="/js/logic.js"></script>
-  <script src="/js/demo-data.js"></script>
-  <script src="/js/analyzer.js"></script>
-  <script src="/js/queue.js"></script>
+  <footer class="wrap foot"><span class="footer-brand">GRAND MOBILE <span>/ Support Copilot</span></span><span id="foot-mode"></span></footer>
+  <dialog id="connection-dialog" aria-labelledby="connection-title"><form id="connection-form"><div class="dialog-heading"><h2 id="connection-title">Подключение к API</h2><button type="button" class="icon-button" id="connection-close" aria-label="Закрыть">×</button></div><p>Запросы идут в API этого сайта. Если сервис защищён, укажите токен администратора.</p><label class="field"><span>Токен доступа</span><input id="api-token" type="password" autocomplete="off" placeholder="Bearer token"></label><p class="small muted">Только в памяти этой вкладки. Не сохраняется в браузере и исчезнет после перезагрузки.</p><p id="connection-status" role="status"></p><div class="actions"><button class="primary" type="submit">Подключиться</button><button class="secondary" type="button" id="connection-clear">Удалить токен</button></div></form></dialog>
+  <script src="/js/logic.js"></script><script src="/js/demo-data.js"></script><script src="/js/analyzer.js"></script><script src="/js/queue.js"></script>
 </body>
 </html>
