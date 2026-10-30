@@ -1,0 +1,39 @@
+name: grandmobile-copilot
+services:
+  copilot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    init: true
+    ports:
+      - "127.0.0.1:${PORT:-8000}:8000"
+    environment:
+      APP_MODE: ${APP_MODE:-demo}
+      DATABASE_PATH: /var/lib/copilot/copilot.sqlite3
+      PORT: "8000"
+      API_TOKEN: ${API_TOKEN:-}
+      RULES_PATH: ${RULES_PATH:-}
+      TAXONOMY_PATH: ${TAXONOMY_PATH:-}
+      ENABLE_GROQ: ${ENABLE_GROQ:-false}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_MODEL: ${GROQ_MODEL:-llama-3.3-70b-versatile}
+      GROQ_TIMEOUT_SECONDS: ${GROQ_TIMEOUT_SECONDS:-4}
+      GROQ_MAX_RETRIES: ${GROQ_MAX_RETRIES:-1}
+      GROQ_INPUT_USD_PER_MILLION: ${GROQ_INPUT_USD_PER_MILLION:-}
+      GROQ_OUTPUT_USD_PER_MILLION: ${GROQ_OUTPUT_USD_PER_MILLION:-}
+      ALLOW_PRIVATE_DATA_TO_GROQ: ${ALLOW_PRIVATE_DATA_TO_GROQ:-false}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8000,http://127.0.0.1:8000}
+      REQUEST_RATE_PER_MINUTE: ${REQUEST_RATE_PER_MINUTE:-120}
+    volumes:
+      - copilot-runtime:/var/lib/copilot
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+volumes:
+  copilot-runtime:

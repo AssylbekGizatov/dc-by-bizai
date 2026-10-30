@@ -1,0 +1,3 @@
+# Optional. Weights are never downloaded by the server.
+-r requirements.txt
+sentence-transformers>=3,<6

@@ -1,0 +1,15 @@
+{
+  "name": "grandmobile-support-copilot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Local full-stack launcher; application dependencies live in frontend and backend.",
+  "scripts": {
+    "dev": ".venv/bin/python scripts/with_env.py .venv/bin/python scripts/dev.py",
+    "build": "npm --prefix frontend run build",
+    "test": "make check",
+    "start": "make serve"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}
