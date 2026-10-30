@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import ast
 from pathlib import Path
 
 import pytest
@@ -51,3 +52,18 @@ def test_release_redacts_a_key():
 
 def test_release_rejects_unknown_binary():
     assert module("check_release").inspect_file("arbitrary.png", b"\x89PNG\x00")
+
+
+def test_root_model_defaults_match_backend_without_loading_secrets():
+    root = SCRIPTS.parent
+    tree = ast.parse((root / "backend/app/config.py").read_text())
+    defaults = [node.args[1].value for node in ast.walk(tree)
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "getenv" and len(node.args) > 1
+                and isinstance(node.args[0], ast.Constant) and node.args[0].value == "GROQ_MODEL"
+                and isinstance(node.args[1], ast.Constant)]
+    assert len(defaults) == 1
+    default = defaults[0]
+    assert module("with_env").read_env(root / ".env.example")["GROQ_MODEL"] == default
+    assert "${GROQ_MODEL:-" + default + "}" in (root / "compose.yaml").read_text()
+    assert f"`{default}`" in (root / "README.md").read_text()

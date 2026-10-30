@@ -18,7 +18,7 @@ class Settings:
     api_token: str | None = field(default_factory=lambda: os.getenv("API_TOKEN") or None)
     enable_groq: bool = field(default_factory=lambda: flag("ENABLE_GROQ"))
     groq_api_key: str | None = field(default_factory=lambda: os.getenv("GROQ_API_KEY") or None)
-    groq_model: str = field(default_factory=lambda: os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"))
+    groq_model: str = field(default_factory=lambda: os.getenv("GROQ_MODEL", "openai/gpt-oss-20b"))
     groq_timeout_seconds: float = field(default_factory=lambda: float(os.getenv("GROQ_TIMEOUT_SECONDS", "4")))
     groq_max_retries: int = field(default_factory=lambda: int(os.getenv("GROQ_MAX_RETRIES", "1")))
     groq_input_usd_per_million: float | None = field(default_factory=lambda: float(os.environ["GROQ_INPUT_USD_PER_MILLION"]) if os.getenv("GROQ_INPUT_USD_PER_MILLION") else None)
@@ -34,6 +34,8 @@ class Settings:
     def __post_init__(self) -> None:
         if self.mode not in {"demo", "production", "test"}:
             raise ValueError("APP_MODE must be demo, test, or production")
+        if self.enable_groq and self.groq_model not in {"openai/gpt-oss-20b", "openai/gpt-oss-120b"}:
+            raise ValueError("This strict-schema Groq adapter supports openai/gpt-oss-20b or openai/gpt-oss-120b; select a verified model")
         if not 0.1 <= self.groq_timeout_seconds <= 30:
             raise ValueError("GROQ_TIMEOUT_SECONDS must be between 0.1 and 30")
         if not 0 <= self.groq_max_retries <= 2:

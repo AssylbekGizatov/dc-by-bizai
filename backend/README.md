@@ -18,7 +18,7 @@ The default is an **offline local baseline**. It starts with clearly synthetic r
 2. Local Unicode/cp1251-glyph normalization, lexical language detection (ru/kk/uz/en/es/pt, else und), regex facts and conservative intent/risk rules. Original player text is retained separately.
 3. Optional **local multilingual E5** performs zero-shot category-prototype fallback for unresolved lexical intents. This is not a trained classifier and its confidence is not calibrated. Safety escalation is independent of category classification.
 4. Local `rank-bm25` + scikit-learn character TF-IDF retrieval; if local weights are configured, dense E5 + reciprocal-rank fusion. Compound `section:ref` IDs avoid repeated bare rule-number collisions. Scope/intent gates reject contextually incompatible rules; weak retrieval abstains. This is conservative heuristic relevance, not a proven entailment system.
-5. Local reviewed-language clauses produce a safe draft. **Optional Groq performs bounded clause composition only**, with no authority to add policy claims or actions. Any additional prose, missing required clause, invalid JSON/citation, timeout, or provider failure falls back locally. A model-generated draft always requires a human. This deliberately sacrifices free-form drafting to meet the no-promises/no-unseen-images requirement; no unrestricted-generative quality claim is made.
+5. Local reviewed-language clauses produce a safe draft. **Optional Groq returns a compact, strict-schema clause-order plan only**, with no authority to add policy claims or actions. Trusted code renders the approved language clauses locally; the model never supplies arbitrary player-facing prose. Any additional prose, missing required clause, invalid JSON/citation, timeout, or provider failure falls back locally. A model-generated draft always requires a human. This deliberately sacrifices free-form drafting to meet the no-promises/no-unseen-images requirement; no unrestricted-generative quality claim is made.
 6. Human review persists the edited draft and revision history as feedback. Feedback is not automatically promoted to training truth.
 
 ## API
@@ -45,7 +45,7 @@ Protected routes require `Authorization: Bearer $API_TOKEN` whenever configured.
 | `LOCAL_MODEL_THREADS` | `2`; allowed 1–16 |
 | `ENABLE_GROQ` | `false`; enable explicitly |
 | `GROQ_API_KEY` | Environment only; never a browser setting or committed value |
-| `GROQ_MODEL` | `llama-3.3-70b-versatile`; configurable |
+| `GROQ_MODEL` | `openai/gpt-oss-20b`; this verified adapter also supports `openai/gpt-oss-120b` |
 | `GROQ_TIMEOUT_SECONDS` | `4`; total generation budget across retries |
 | `GROQ_MAX_RETRIES` | `1`; bounded 0–2 |
 | `GROQ_INPUT_USD_PER_MILLION` / `GROQ_OUTPUT_USD_PER_MILLION` | Unset: provider cost remains unknown. Set current verified rates to calculate reported usage cost. |
@@ -57,7 +57,7 @@ Protected routes require `Authorization: Bearer $API_TOKEN` whenever configured.
 
 Model dependencies are optional (`requirements-models.txt`). The loader enforces offline mode, disables Hub telemetry, uses safetensors and `trust_remote_code=False`, and never downloads weights. Use the root model-download tooling explicitly and retain the official model license. Health reports whether the encoder actually loaded.
 
-The provider uses JSON-object mode plus our own strict Pydantic validation, **not** an unsupported claim of strict provider schema enforcement. Rejected outputs can still incur provider charges: known usage is accumulated across retries; unknown usage/cost stays unknown. Local API cost is zero, but compute is not free and is not measured. Neither the $0.002 budget nor production p95 has been established with live Groq traffic.
+The provider uses Groq **strict JSON Schema** (`strict: true`, every property required, `additionalProperties: false`) with `reasoning_effort=low`, `include_reasoning=false`, and a fixed 600-token completion cap. The compact `{clause_order, cited}` response is still validated locally: all approved indices must occur exactly once, the greeting must remain first, and citations must exactly match the whitelist. Schema compliance does not establish policy relevance or language quality. Other model IDs require an explicit reviewed adapter change; a stale/unsupported configured ID fails before networking. Rejected outputs can still incur provider charges: known usage is accumulated across retries; unknown usage/cost stays unknown. Local API cost is zero, but compute is not free and is not measured. Neither the $0.002 budget nor production p95 is established by mocked tests. Use separately recorded live-validation evidence when available; account/model availability is not inferred from documentation.
 
 ## Private batch inference and evaluation
 
@@ -81,6 +81,6 @@ Evaluation reports contract coverage, citation existence, escalation rate, distr
 - [rank-bm25](https://github.com/dorianbrown/rank_bm25) / [scikit-learn](https://scikit-learn.org/stable/): lightweight working local lexical retrieval instead of copying a large RAG repository.
 - [Sentence Transformers](https://sbert.net/) / [multilingual-e5-small](https://huggingface.co/intfloat/multilingual-e5-small): optional local semantic embeddings, no hosted extraction.
 - [HTTPX](https://www.python-httpx.org/): explicit provider timeout/mockable HTTP transport.
-- Groq official [structured output docs](https://console.groq.com/docs/structured-outputs) and [configured model](https://console.groq.com/docs/model/llama-3.3-70b-versatile). No live provider calls were needed for implementation tests.
+- Groq official [structured output docs](https://console.groq.com/docs/structured-outputs) and [configured model](https://console.groq.com/docs/model/openai/gpt-oss-20b), [reasoning API](https://console.groq.com/docs/reasoning), and [deprecation history](https://console.groq.com/docs/deprecations), checked 2026-10-30. Llama 3.3 70B was retired for free/developer usage on 2026-08-16; enterprise exceptions do not make it a safe default. Unit tests remain mocked and never use a real key.
 
 Tests use only synthetic content and MockTransport; no organizer rows/rule text, API secrets, pretrained weights, or private databases belong in the repository.

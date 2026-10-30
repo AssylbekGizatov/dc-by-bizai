@@ -1,0 +1,12 @@
+{
+  "synthetic": true,
+  "source": "Independent hand-written multilingual smoke cases, not derived from Grand Mobile data or policies.",
+  "cases": [
+    {"id": "synthetic-groq-ru", "language": "ru", "text": "Здравствуйте! Как выбрать работу в игре? Нужна инструкция."},
+    {"id": "synthetic-groq-kk", "language": "kk", "text": "Сәлеметсіз бе! Ойында жұмысты қалай таңдауға болады? Маған көмек керек."},
+    {"id": "synthetic-groq-uz", "language": "uz", "text": "Salom! O‘yinda qanday ish tanlash mumkin? Menga yordam kerak."},
+    {"id": "synthetic-groq-en", "language": "en", "text": "Hello! How do I choose a job in the game? Please help."},
+    {"id": "synthetic-groq-es", "language": "es", "text": "Hola, ¿donde puedo elegir un trabajo en el juego? Gracias por la ayuda."},
+    {"id": "synthetic-groq-pt", "language": "pt", "text": "Olá! Como escolher um trabalho no jogo? Obrigado pela ajuda."}
+  ]
+}

@@ -128,14 +128,14 @@ def test_freeform_paraphrases_fail_closed(unsafe):
 
 
 def test_bounded_provider_acceptance_and_retry_cost_accounting():
-    from app.generation import template_draft
+    from app.generation import template_draft, approved_clauses
     async def run():
         current = analysis()
         safe = template_draft(current, [], True)
         attempts = []
         def respond(request):
             attempts.append(json.loads(request.content))
-            answer = {'text':'We guarantee a full refund.','cited':[]} if len(attempts)==1 else safe.model_dump()
+            answer = {'text':'We guarantee a full refund.','cited':[]} if len(attempts)==1 else {'clause_order':list(range(len(approved_clauses(current, [], True)))), 'cited':[]}
             return httpx.Response(200,json={'choices':[{'message':{'content':json.dumps(answer)}}],
                                            'usage':{'prompt_tokens':100,'completion_tokens':20}})
         async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
@@ -163,3 +163,57 @@ def test_rejected_provider_usage_is_not_reported_free():
             assert result.input_tokens == 100 and result.output_tokens == 20
             assert result.cost_usd == pytest.approx(.00014)
     asyncio.run(run())
+
+
+def test_default_model_and_strict_compact_provider_contract(monkeypatch):
+    from app.generation import approved_clauses, template_draft
+    monkeypatch.delenv('GROQ_MODEL', raising=False)
+    assert Settings().groq_model == 'openai/gpt-oss-20b'
+    async def run():
+        current = analysis('Қалай жұмысқа орналасуға болады?')
+        clauses = approved_clauses(current, [], True)
+        def respond(request):
+            payload = json.loads(request.content)
+            assert payload['model'] == 'openai/gpt-oss-20b'
+            assert payload['reasoning_effort'] == 'low'
+            assert payload['include_reasoning'] is False
+            assert 'reasoning_format' not in payload
+            assert payload['max_completion_tokens'] == 600
+            fmt = payload['response_format']
+            assert fmt['type'] == 'json_schema'
+            schema = fmt['json_schema']
+            assert schema['strict'] is True
+            assert schema['schema']['additionalProperties'] is False
+            assert set(schema['schema']['required']) == {'clause_order','cited'}
+            assert schema['schema']['properties']['clause_order']['items']['enum'] == list(range(len(clauses)))
+            assert 'text' not in schema['schema']['properties']
+            data = json.loads(payload['messages'][1]['content'])
+            assert data['approved_clauses'][0] == {'id':0, 'text':clauses[0]}
+            return httpx.Response(200,json={'choices':[{'finish_reason':'stop','message':{'content':json.dumps({
+                'clause_order':list(range(len(clauses))), 'cited':[]})}}],
+                'usage':{'prompt_tokens':100,'completion_tokens':40}})
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+            generator=DraftGenerator(Settings(mode='test',enable_groq=True,groq_api_key='synthetic-test-only'),client)
+            result=await generator.generate(current,[],True,False)
+            assert result.mode == 'groq:openai/gpt-oss-20b'
+            assert result.draft == template_draft(current, [], True)
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize('order', [[0], [0,0,1,2], [0,1,2,99], [True,1,2,3], ['0',1,2,3], [1,0,2,3]])
+def test_invalid_provider_plan_fails_closed(order):
+    async def run():
+        def respond(request):
+            return httpx.Response(200,json={'choices':[{'message':{'content':json.dumps({'clause_order':order,'cited':[]})}}],
+                'usage':{'prompt_tokens':10,'completion_tokens':10}})
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+            generator=DraftGenerator(Settings(mode='test',enable_groq=True,groq_api_key='synthetic-test-only',groq_max_retries=0),client)
+            result=await generator.generate(analysis(),[],True,False)
+            assert result.mode == 'local_template'
+    asyncio.run(run())
+
+
+def test_unsupported_or_retired_model_rejected_before_network():
+    with pytest.raises(ValueError, match='strict-schema'):
+        Settings(mode='test',enable_groq=True,groq_model='llama-3.3-70b-versatile',groq_api_key='synthetic-test-only')
+    assert Settings(mode='test',enable_groq=True,groq_model='openai/gpt-oss-120b',groq_api_key='synthetic-test-only').groq_model.endswith('120b')
