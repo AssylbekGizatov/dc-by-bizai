@@ -6,11 +6,12 @@ import json
 import time
 import uuid
 from collections import Counter, OrderedDict
+from dataclasses import replace
 from datetime import datetime, timezone
 
 from .config import Settings
 from .classifier import LocalIntentClassifier
-from .generation import DraftGenerator
+from .generation import DraftGenerator, public_citations, reply_language
 from .nlp import analyze
 from .retrieval import RuleIndex
 from .schemas import Diagnostics, DraftReply, Ticket, TriageRequest, TriageResponse
@@ -63,7 +64,8 @@ class CopilotService:
                 analysis = self.classifier.refine(analysis, request.kind)
             nlp_ms = (time.perf_counter() - started) * 1000
             references = self.index.unresolved_references(analysis.extracted.rule_refs)
-            cache_payload = {"text": analysis.text, "kind": request.kind, "lang": analysis.language,
+            reply_lang = reply_language(analysis.language, request.server_lang)
+            cache_payload = {"text": analysis.text, "kind": request.kind, "lang": analysis.language, "reply_lang": reply_lang,
                              "evidence": analysis.evidence_count, "nickname": analysis.extracted.nickname,
                              "refs": analysis.extracted.rule_refs, "server": analysis.extracted.server,
                              "rules": self.index.version, "model": self.settings.groq_model, "groq": self.settings.enable_groq}
@@ -106,7 +108,9 @@ class CopilotService:
             needs_human = bool(reasons)
             generation_started = time.perf_counter()
             if not cached or old_needed != needs_human:
-                generation = await self.generator.generate(analysis, citations, needs_human, private_source=self.index.private_source)
+                # Для «und» черновик пишется на языке сервера (или по-русски), а не на английском.
+                draft_analysis = analysis if reply_lang == analysis.language else replace(analysis, language=reply_lang)
+                generation = await self.generator.generate(draft_analysis, citations, needs_human, private_source=self.index.private_source)
                 self.cache[cache_key] = (citations, generation, needs_human)
                 if len(self.cache) > self.settings.cache_capacity:
                     self.cache.popitem(last=False)
@@ -126,10 +130,10 @@ class CopilotService:
                 reasons.append("Повторяющийся или массовый текст: вероятный спам")
             # Spam/duplicate/flood is a queue signal, never deletion, rejection or automatic penalty.
             needs_human = needs_human or duplicate or flood or analysis.spam
-            output_lang = analysis.language if analysis.language != "und" else "en"
+            public_text, public_cited = public_citations(generation.draft, self.index.by_id)
             result = TriageResponse(lang=analysis.language, category=analysis.category, priority=analysis.priority,
                 is_spam_or_duplicate=duplicate or flood or analysis.spam, extracted=analysis.extracted,
-                draft_reply=DraftReply(lang=output_lang, text=generation.draft.text, cited=generation.draft.cited),
+                draft_reply=DraftReply(lang=reply_lang, text=public_text, cited=public_cited),
                 needs_human=needs_human, confidence=round(analysis.confidence, 3), reasons=reasons)
             total_ms = (time.perf_counter() - started) * 1000
             diagnostics = Diagnostics(language_method="unicode+local_lexical_v1", classifier_method="local_e5_prototypes+regex_v1" if self.classifier else "local_regex_taxonomy_v1",
@@ -141,7 +145,7 @@ class CopilotService:
             ticket = Ticket(id=str(uuid.uuid4()), text="\n".join(m.text for m in request.messages if m.role == "player"),
                 normalized_text=analysis.text, kind=request.kind, created_at=datetime.now(timezone.utc).isoformat(),
                 status="pending", player_id=request.reporter_hash, server=analysis.extracted.server,
-                attachments_count=analysis.evidence_count, result=result, citations=citations, draft_reply=generation.draft.text,
+                attachments_count=analysis.evidence_count, result=result, citations=citations, draft_reply=public_text,
                 diagnostics=diagnostics)
             self.metrics["tickets_processed"] += 1
             self.metrics["needs_human"] += int(needs_human)

@@ -42,9 +42,18 @@ def to_inference(record: dict) -> TriageRequest:
     return TriageRequest.model_validate(selected)
 
 
+RULES_REQUIRED = ("RULES_PATH is not set: predictions would cite the synthetic demo rules, which do not exist in rules.json.\n"
+                  "Set RULES_PATH=/path/to/rules.json (and TAXONOMY_PATH=/path/to/taxonomy.json) in .env or the environment.\n"
+                  "Не указан RULES_PATH: без настоящих правил цитаты будут выдуманными. Укажите путь к rules.json в .env.")
+
+
 async def run(args: argparse.Namespace) -> int:
     settings = replace(Settings(), database_path=":memory:", enable_groq=False, groq_api_key=None)
+    if not settings.rules_path and not args.allow_synthetic_rules:
+        print(RULES_REQUIRED, file=sys.stderr)
+        return 2
     svc = CopilotService(settings)
+    public_refs = {rule.ref for rule in svc.index.rules if rule.ref != "section"}
     counts, languages, categories, priorities = Counter(), Counter(), Counter(), Counter()
     latencies = []
     begin = time.perf_counter()
@@ -72,12 +81,15 @@ async def run(args: argparse.Namespace) -> int:
                     return 2
                 result = ticket.result
                 if sink:
-                    sink.write(result.model_dump_json() + "\n")
+                    # ticket_id первым полем: по нему проверяющие сопоставляют предсказание с обращением.
+                    row = {"ticket_id": request.ticket_id} if request.ticket_id is not None else {}
+                    row.update(result.model_dump(mode="json"))
+                    sink.write(json.dumps(row, ensure_ascii=False) + "\n")
                 counts["processed"] += 1
                 counts["needs_human"] += int(result.needs_human)
                 counts["spam_or_duplicate"] += int(result.is_spam_or_duplicate)
                 counts["with_citations"] += int(bool(result.draft_reply.cited))
-                counts["citations_exist"] += int(all(ref in svc.index.by_id for ref in result.draft_reply.cited))
+                counts["citations_exist"] += int(all(ref in public_refs for ref in result.draft_reply.cited))
                 counts["synthetic_rule_tickets"] += int(any(c.synthetic for c in ticket.citations))
                 counts["normalized_kazakh"] += int("kazakh_cp1251_restored" in ticket.diagnostics.normalizations)
                 languages[result.lang] += 1
@@ -126,6 +138,8 @@ def main() -> None:
         mode = sub.add_parser(command)
         mode.add_argument("--input", required=True)
         mode.add_argument("--output", required=True)
+        mode.add_argument("--allow-synthetic-rules", action="store_true",
+                          help="Only for tests and demos: run without RULES_PATH on synthetic rules.")
     args = parser.parse_args()
     try:
         raise SystemExit(asyncio.run(run(args)))

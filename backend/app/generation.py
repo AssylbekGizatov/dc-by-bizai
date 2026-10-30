@@ -176,6 +176,37 @@ def validate_draft(draft: GeneratedDraft, citations: list[Citation], required: b
     return set(displayed) == set(draft.cited)
 
 
+def reply_language(detected: str, server_lang: str | None) -> str:
+    """Язык черновика: язык игрока; если он не определён — язык сервера, иначе русский (большинство обращений)."""
+    if detected in TEMPLATES:
+        return detected
+    if server_lang in TEMPLATES:
+        return server_lang
+    return "ru"
+
+
+def public_citations(draft: GeneratedDraft, by_id: dict[str, Citation]) -> tuple[str, list[str]]:
+    """Внутренний id «30:2.1» (раздел:пункт) -> публичный идентификатор пункта points[].ref («2.1»).
+
+    Внутри id составной, чтобы одинаковые номера из разных разделов не путались, и проверка
+    черновика работает по нему. Наружу, в cited, идёт ref из rules.json, как требует README данных.
+    В тексте пункт подписывается разделом: «2.1 (Общие правила игры)».
+    """
+    cited: list[str] = []
+    for rule_id in draft.cited:
+        rule = by_id.get(rule_id)
+        if rule is not None and rule.ref != "section" and rule.ref not in cited:
+            cited.append(rule.ref)
+
+    def label(match: re.Match) -> str:
+        rule = by_id.get(match.group(1))
+        if rule is None:
+            return match.group(0)
+        return rule.section if rule.ref == "section" else f"{rule.ref} ({rule.section})"
+
+    return re.sub(r"\[([^]\n]+)\]", label, draft.text), cited
+
+
 def template_draft(analysis: Analysis, citations: list[Citation], needs_human: bool) -> GeneratedDraft:
     return GeneratedDraft(text=" ".join(approved_clauses(analysis, citations, needs_human)),
                           cited=[c.id for c in citations[:2]])

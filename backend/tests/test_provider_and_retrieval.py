@@ -8,7 +8,7 @@ from pathlib import Path
 import httpx
 import pytest
 from app.config import Settings
-from app.generation import DraftGenerator, GeneratedDraft, validate_draft
+from app.generation import DraftGenerator, GeneratedDraft, public_citations, reply_language, validate_draft
 from app.nlp import analyze
 from app.retrieval import RuleIndex
 from app.schemas import TriageRequest
@@ -217,3 +217,24 @@ def test_unsupported_or_retired_model_rejected_before_network():
     with pytest.raises(ValueError, match='strict-schema'):
         Settings(mode='test',enable_groq=True,groq_model='llama-3.3-70b-versatile',groq_api_key='synthetic-test-only')
     assert Settings(mode='test',enable_groq=True,groq_model='openai/gpt-oss-120b',groq_api_key='synthetic-test-only').groq_model.endswith('120b')
+
+
+def test_public_citations_are_rule_refs_with_section_label(tmp_path):
+    fixture={'synthetic':True,'rules':[
+        {'id':30,'category':'Synthetic general','points':[{'ref':'2.1','text':'Синтетический запрет оскорблений.'}]},
+        {'id':31,'category':'Synthetic complaints','points':[{'ref':'2.1','text':'Синтетическое правило жалоб.'}]},
+        {'id':43,'category':'Synthetic glossary','text':'Синтетическое определение терминов.','points':[]},
+    ]}
+    path=tmp_path/'fixture.json'; path.write_text(json.dumps(fixture,ensure_ascii=False))
+    index=RuleIndex(str(path))
+    draft=GeneratedDraft(text='Пункты: [30:2.1], [31:2.1], [43:section].',cited=['30:2.1','31:2.1','43:section'])
+    text,cited=public_citations(draft,index.by_id)
+    # Наружу только points[].ref из rules.json, без повторов и без ссылок на целый раздел.
+    assert cited==['2.1']
+    assert text=='Пункты: 2.1 (Synthetic general), 2.1 (Synthetic complaints), Synthetic glossary.'
+
+
+def test_reply_language_for_undetermined_text():
+    assert reply_language('kk','ru')=='kk'
+    assert reply_language('und','uz')=='uz'
+    assert reply_language('und',None)=='ru'

@@ -23,7 +23,7 @@ def test_predict_atomic_private_outputs(tmp_path):
     source.write_text(json.dumps({"kind":"report","messages":[{"role":"player","text":"Где найти работу?"}]}) + "\n{broken\n")
     output.write_text("existing-result")
     env = os.environ | {"PYTHONPATH":str(Path(__file__).resolve().parents[1]), "APP_MODE":"test", "ENABLE_GROQ":"false"}
-    args = [sys.executable,"-m","app.cli","predict","--input",str(source),"--output",str(output)]
+    args = [sys.executable,"-m","app.cli","predict","--input",str(source),"--output",str(output),"--allow-synthetic-rules"]
     bad = subprocess.run(args, env=env, capture_output=True, text=True)
     assert bad.returncode == 2 and output.read_text() == "existing-result"
     source.write_text(source.read_text().splitlines()[0] + "\n")
@@ -32,3 +32,16 @@ def test_predict_atomic_private_outputs(tmp_path):
     assert output.stat().st_mode & 0o077 == 0
     assert json.loads(output.read_text())["category"] == "report.question"
     assert not list(tmp_path.glob(".copilot-*"))
+
+
+def test_predict_requires_real_rules_and_keeps_ticket_id(tmp_path):
+    source, output = tmp_path / "input.jsonl", tmp_path / "pred.jsonl"
+    source.write_text(json.dumps({"ticket_id":"synthetic-1","kind":"report","messages":[{"role":"player","text":"Где найти работу?"}]}) + "\n")
+    env = {k: v for k, v in os.environ.items() if k != "RULES_PATH"} | {"PYTHONPATH":str(Path(__file__).resolve().parents[1]), "APP_MODE":"test", "ENABLE_GROQ":"false"}
+    args = [sys.executable,"-m","app.cli","predict","--input",str(source),"--output",str(output)]
+    missing = subprocess.run(args, env=env, capture_output=True, text=True)
+    assert missing.returncode == 2 and "RULES_PATH" in missing.stderr and not output.exists()
+    good = subprocess.run(args + ["--allow-synthetic-rules"], env=env, capture_output=True, text=True)
+    assert good.returncode == 0, good.stderr
+    row = json.loads(output.read_text())
+    assert list(row)[0] == "ticket_id" and row["ticket_id"] == "synthetic-1"
