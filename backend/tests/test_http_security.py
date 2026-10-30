@@ -120,6 +120,29 @@ def test_same_reporter_window_dedup_and_other_reporter_separation(client):
     assert submit('synthetic-a','2026-01-01T12:00:00')['is_spam_or_duplicate'] is False
 
 
+FLOOD_TEXTS=['Синтетика: застрял в текстурах возле банка, не могу выйти.','Синтетика: как вступить в полицию на сервере?',
+ 'Синтетика: пропала машина из гаража после рестарта.','Синтетика: не работает голосовой чат в игре.',
+ 'Синтетика: где найти работу дальнобойщика новичку?','Синтетика: не открывается меню телефона персонажа.']
+
+
+def test_flood_limit_flags_requests_after_five_per_hour(client):
+    def submit(reporter,when,text):
+        body={'kind':'report','reporter_hash':reporter,'created_at':when,'messages':[{'role':'player','text':text}]}
+        return client.post('/triage',headers=AUTH,json=body).json()
+    first=[submit('synthetic-flood',f'2026-01-01T10:{10*i:02d}:00',text) for i,text in enumerate(FLOOD_TEXTS[:5])]
+    assert not any(any(r.startswith('Флуд') for r in item['reasons']) for item in first)
+    sixth=submit('synthetic-flood','2026-01-01T10:50:00',FLOOD_TEXTS[5])
+    assert sixth['is_spam_or_duplicate'] is True and sixth['needs_human'] is True
+    assert any(r.startswith('Флуд: 6-е обращение') for r in sixth['reasons'])
+    assert not any(r.startswith('Флуд') for r in submit('synthetic-other','2026-01-01T10:50:00',FLOOD_TEXTS[0])['reasons'])
+    assert not any(r.startswith('Флуд') for r in submit('synthetic-flood','2026-01-01T12:00:00',FLOOD_TEXTS[1])['reasons'])
+
+
+def test_flood_limit_setting_is_bounded():
+    with pytest.raises(ValueError):
+        Settings(mode='test',database_path=':memory:',flood_limit_per_hour=0)
+
+
 def test_anonymous_same_text_is_not_personal_duplicate(client):
     for _ in range(2):
         assert client.post('/triage',headers=AUTH,json=TRIAGE).json()['is_spam_or_duplicate'] is False

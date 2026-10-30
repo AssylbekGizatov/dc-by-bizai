@@ -9,9 +9,14 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from .schemas import ReviewRequest, Ticket
+
+
+class RepeatCheck(NamedTuple):
+    duplicate: bool
+    position: int
 
 
 class ConflictError(Exception):
@@ -142,8 +147,15 @@ class TicketStore:
                 raise
 
     def duplicate(self, reporter: str | None, text: str, observed_at: float | None = None) -> bool:
+        return self.check_repeat(reporter, text, observed_at).duplicate
+
+    def check_repeat(self, reporter: str | None, text: str, observed_at: float | None = None) -> "RepeatCheck":
+        """«1 игрок, 1 проблема за час» и счётчик обращений игрока за последний час.
+
+        position — номер этого обращения среди обращений игрока за час до него включительно.
+        """
         if not reporter:
-            return False  # Never merge anonymous players merely because their messages match.
+            return RepeatCheck(False, 0)  # Never merge anonymous players merely because their messages match.
         stamp = observed_at if observed_at is not None else time.time()
         reporter_key = hashlib.sha256(reporter.encode()).hexdigest()
         normalized = " ".join(text.casefold().split())
@@ -161,6 +173,9 @@ class TicketStore:
                     if row["problem_hash"] == problem_hash or (len(tokens) >= 5 and similarity >= 0.85):
                         duplicate = True
                         break
+                # Flood counts only earlier events: shuffled offline input never flags the first requests of an hour.
+                earlier = self.connection.execute("SELECT COUNT(*) FROM dedup WHERE reporter_key=? AND observed_at>? AND observed_at<=?",
+                    (reporter_key, stamp - 3600, stamp)).fetchone()[0]
                 self.connection.execute("INSERT INTO dedup(reporter_key,problem_hash,token_hashes,observed_at) VALUES(?,?,?,?)", (reporter_key, problem_hash, json.dumps(sorted(tokens)), stamp))
                 # Historical offline inputs may be shuffled. Do not purge them using the
                 # newest event timestamp. Match both orders within the same one-hour window.
@@ -172,7 +187,7 @@ class TicketStore:
             except Exception:
                 self.connection.execute("ROLLBACK")
                 raise
-        return duplicate
+        return RepeatCheck(duplicate, int(earlier) + 1)
 
     def feedback(self, ticket_id: str) -> list[dict[str, Any]]:
         with self.lock:

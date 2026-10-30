@@ -114,16 +114,21 @@ class CopilotService:
             warnings.extend(generation.warnings)
             stamp = request.created_at.timestamp() if request.created_at and request.created_at.tzinfo else (
                 request.created_at.replace(tzinfo=timezone.utc).timestamp() if request.created_at else None)
-            duplicate = self.store.duplicate(request.reporter_hash, analysis.text, stamp)
+            repeat = self.store.check_repeat(request.reporter_hash, analysis.text, stamp)
+            duplicate = repeat.duplicate
+            flood = repeat.position > self.settings.flood_limit_per_hour
             if duplicate:
                 reasons.append("Повтор того же заявителя по той же проблеме в течение часа")
+            if flood:
+                reasons.append(f"Флуд: {repeat.position}-е обращение этого игрока за час (лимит {self.settings.flood_limit_per_hour})")
+                self.metrics["flood"] += 1
             if analysis.spam:
                 reasons.append("Повторяющийся или массовый текст: вероятный спам")
-            # Spam/duplicate is a queue signal, never deletion or automatic penalty.
-            needs_human = needs_human or duplicate or analysis.spam
+            # Spam/duplicate/flood is a queue signal, never deletion, rejection or automatic penalty.
+            needs_human = needs_human or duplicate or flood or analysis.spam
             output_lang = analysis.language if analysis.language != "und" else "en"
             result = TriageResponse(lang=analysis.language, category=analysis.category, priority=analysis.priority,
-                is_spam_or_duplicate=duplicate or analysis.spam, extracted=analysis.extracted,
+                is_spam_or_duplicate=duplicate or flood or analysis.spam, extracted=analysis.extracted,
                 draft_reply=DraftReply(lang=output_lang, text=generation.draft.text, cited=generation.draft.cited),
                 needs_human=needs_human, confidence=round(analysis.confidence, 3), reasons=reasons)
             total_ms = (time.perf_counter() - started) * 1000

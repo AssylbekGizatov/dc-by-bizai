@@ -67,8 +67,7 @@
       result = JSON.parse(JSON.stringify(raw));
       result.reasons = result.reasons || [];
       result.draft_reply.cited = (result.draft_reply.cited || []).map(mvpCode);
-      // Сервис сам ищет повторы того же игрока; страница дополнительно считает флуд (5 обращений за час) по истории вкладки.
-      applyRepeats(input, result, result.is_spam_or_duplicate);
+      // Повторы и флуд (больше 5 обращений игрока за час) сервис определяет сам по reporter_hash и created_at.
     } else {
       result = L.demoTriage(input, rules);
       delete result._normalized;
@@ -97,12 +96,14 @@
     uz: 'Salom! Murojaatingiz administratorga yuborilgan, qayta yozish shart emas. Javobni birinchi murojaatda beramiz.',
     en: 'Hello! Your request has already been passed to an administrator, there is no need to write again. We will reply in your first request.',
   };
-  function applyRepeats(input, r, serviceFlagged) {
+  // Только для демо-режима: та же логика, что в сервисе (backend/app/storage.py, check_repeat).
+  const FLOOD_LIMIT = 5;
+  function applyRepeats(input, r) {
     if (!input.player) return;
     const now = Date.now();
     const recent = history.filter((x) => x.input.player === input.player && now - x.at < HOUR);
     const mine = tokens(L.normalizeKk(input.text, input.server_lang).text);
-    const dup = serviceFlagged ? null : recent.find((x) => {
+    const dup = recent.find((x) => {
       const xr = x.out.result;
       const sameTarget = input.kind === 'report' || (xr.extracted.nickname || '') === (r.extracted.nickname || '');
       if (xr.category === r.category && sameTarget) return true;
@@ -121,9 +122,9 @@
       r.draft_reply = { lang: r.lang, text: DUP_TEXT[r.lang] || DUP_TEXT.en, cited: [] };
       r.confidence = 0.9;
     }
-    if (recent.length + 1 >= 5) {
+    if (recent.length + 1 > FLOOD_LIMIT) {
       r.is_spam_or_duplicate = true;
-      r.reasons.push('Флуд: ' + (recent.length + 1) + '-е обращение от этого игрока за час');
+      r.reasons.push('Флуд: ' + (recent.length + 1) + '-е обращение этого игрока за час (лимит ' + FLOOD_LIMIT + ')');
     }
   }
   function renderHistory(current) {
