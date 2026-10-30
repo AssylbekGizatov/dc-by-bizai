@@ -21,7 +21,8 @@
   function fromApi(t) {
     return { id: t.id, kind: t.kind, created_at: t.created_at, status: t.status, revision: t.revision, text: t.text,
       player: t.player_id, result: t.result, draft: t.draft_reply, note: t.reviewer_note || '',
-      citations: (t.citations || []).map((c) => ({ code: UI.mvpCode(c.id), title: c.title || '', text: c.text || '' })) };
+      citations: (t.citations || []).filter((c) => c.ref !== 'section')
+        .map((c) => ({ code: UI.mvpCode(c.id), ref: c.ref, title: String(c.title || '').replace(/\s·\s.*$/, ''), text: c.text || '' })) };
   }
   const demoStatus = (s) => (s === 'new' ? 'pending' : s === 'sent' ? 'simulated_sent' : s);
   function fromDemo(t) {
@@ -156,7 +157,9 @@
     const r = t.result;
     const sent = t.status === 'simulated_sent';
     const norm = L.normalizeKk(t.text, r.lang);
+    // Номер в черновике — points[].ref («2.1»), поэтому правило доступно и по нему, и по коду с разделом.
     const rules = new Map(t.citations.map((c) => [c.code, c]));
+    t.citations.forEach((c) => { if (c.ref && !rules.has(c.ref)) rules.set(c.ref, c); });
     UI.rules().forEach((v, k) => { if (!rules.has(k)) rules.set(k, v); });
 
     const draft = h('textarea', { class: 'draft', rows: '6', 'aria-label': 'Черновик ответа игроку', readonly: !state.editing });

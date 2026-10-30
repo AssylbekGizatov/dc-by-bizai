@@ -28,6 +28,15 @@
   const pf = new Intl.NumberFormat('ru-RU', { style: 'percent', maximumFractionDigits: 0 });
   const mvpCode = (id) => { const m = /^(\d+):(.+)$/.exec(String(id || '')); if (!m) return String(id || ''); return m[1] === '31' ? 'ЖБ ' + m[2] : m[1] === '32' ? 'GZ ' + m[2] : m[2]; };
   const ruleLabel = (code) => (/^\d/.test(code) ? code + ' ОП' : code);
+  // Сервис цитирует points[].ref («2.1»), а пункт однозначно задаёт внутренний id («31:2.1» -> «ЖБ 2.1»).
+  // Правило кладём под обоими ключами, чтобы находить его и по цитате, и по номеру в тексте черновика.
+  function addRule(c) {
+    const code = mvpCode(c.id || c.ref);
+    const rule = { code, title: String(c.title || '').replace(/\s·\s.*$/, ''), text: c.text || '', section: c.section || '' };
+    if (!rules.has(code)) rules.set(code, rule);
+    if (c.ref && c.ref !== 'section' && !rules.has(c.ref)) rules.set(c.ref, rule);
+    return code;
+  }
 
   // ---------- подключение ----------
   async function detect() {
@@ -40,8 +49,7 @@
       const rr = await fetch('/api/rules');
       if (rr.ok) {
         const d = await rr.json();
-        const list = (d.items || []).map((x) => ({ code: x.code || mvpCode(x.id || x.ref), title: String(x.title || '').replace(/\s·\s.*$/, ''), text: x.text || '', section: x.section || '' }));
-        if (list.length) rules = new Map(list.map((x) => [x.code, x]));
+        if ((d.items || []).length) { rules = new Map(); d.items.forEach(addRule); }
       }
     } catch (e) { mode = 'demo'; }
   }
@@ -56,7 +64,7 @@
   // ---------- анализ ----------
   async function analyze(input) {
     const t0 = performance.now();
-    let result, raw = null, ticketId = null;
+    let result, raw = null, ticketId = null, found = null;
     if (mode === 'live') {
       // POST /api/tickets запускает тот же конвейер, что /triage, и сохраняет обращение в очередь админа.
       const body = { kind: input.kind, text: input.text, attachments_count: input.attachments, server_lang: input.server_lang };
@@ -67,11 +75,10 @@
       if (!res.ok) throw new Error(HTTP_ERRORS[res.status] || 'Сервис вернул ошибку ' + res.status + '.');
       const ticket = await res.json();
       ticketId = ticket.id;
-      (ticket.citations || []).forEach((c) => { const code = mvpCode(c.id); if (!rules.has(code)) rules.set(code, { code, title: c.title || '', text: c.text || '' }); });
+      found = (ticket.citations || []).filter((c) => c.ref !== 'section').map(addRule);
       raw = ticket.result;
       result = JSON.parse(JSON.stringify(raw));
       result.reasons = result.reasons || [];
-      result.draft_reply.cited = (result.draft_reply.cited || []).map(mvpCode);
       // Повторы и флуд (больше 5 обращений игрока за час) сервис определяет сам по reporter_hash и created_at.
     } else {
       result = L.demoTriage(input, rules);
@@ -80,7 +87,8 @@
     }
     const cited = result.draft_reply.cited || [];
     const extra = mode === 'demo' ? (L.CATEGORY_RULES[result.category] || []).filter((c) => rules.has(c)) : [];
-    const citations = Array.from(new Set(cited.concat(extra))).slice(0, 3);
+    // С API показываем пункты, которые нашёл поиск по правилам (с разделом); без API — цитаты демо-анализа.
+    const citations = (found && found.length ? found : Array.from(new Set(cited.concat(extra)))).slice(0, 3);
     if (mode === 'demo' && window.SC.queue) { try { ticketId = window.SC.queue.addDemo(input, result, citations); } catch (e) { ticketId = null; } }
     return { result, raw, citations, ticketId, ms: performance.now() - t0 };
   }
