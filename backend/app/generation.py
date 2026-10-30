@@ -8,6 +8,9 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import time
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from dataclasses import dataclass
 
 import httpx
@@ -27,6 +30,23 @@ class CompositionPlan(StrictModel):
     """Provider-only contract; trusted code renders the actual user-facing words."""
     clause_order: list[StrictInt] = Field(min_length=1, max_length=12)
     cited: list[str] = Field(max_length=5)
+
+
+def retry_delay(value: str | None, default: float) -> float:
+    """Honor provider backoff without sleeping past the request's total deadline."""
+    if not value:
+        return default
+    try:
+        delay = float(value)
+    except ValueError:
+        try:
+            stamp = parsedate_to_datetime(value)
+            if stamp.tzinfo is None:
+                stamp = stamp.replace(tzinfo=timezone.utc)
+            delay = (stamp - datetime.now(timezone.utc)).total_seconds()
+        except (ValueError, TypeError, OverflowError):
+            return default
+    return max(0.0, delay) if 0 <= delay < float("inf") else default
 
 
 def composition_response_format(clause_count: int, citations: list[str]) -> dict:
@@ -117,6 +137,41 @@ TEMPLATES = {
     },
 }
 
+# Requests for review context, not unverified gameplay instructions or promises.
+CONTEXT_CLAUSES = {
+    "ru": {
+        "payment": "Для проверки укажите дату, сумму и способ оплаты. Не присылайте номер карты, CVV, пароли или коды подтверждения.",
+        "account": "Уточните, когда вы заметили проблему с доступом и какие изменения в аккаунте обнаружили. Пароли и коды подтверждения здесь не нужны.",
+        "appeal": "Укажите дату, вид ограничения и причину, по которой вы хотите его обжаловать. Решение принимает уполномоченный специалист.",
+    },
+    "kk": {
+        "payment": "Тексеру үшін төлемнің күнін, сомасын және тәсілін көрсетіңіз. Карта нөмірін, CVV, құпиясөзді немесе растау кодтарын жібермеңіз.",
+        "account": "Кіру мәселесін қашан байқағаныңызды және аккаунтта қандай өзгерістер болғанын нақтылаңыз. Құпиясөздер мен растау кодтары қажет емес.",
+        "appeal": "Шектеудің күнін, түрін және оған шағымдану себебін көрсетіңіз. Шешімді уәкілетті маман қабылдайды.",
+    },
+    "uz": {
+        "payment": "Tekshirish uchun to'lov sanasi, summasi va usulini ko'rsating. Karta raqami, CVV, parol yoki tasdiqlash kodlarini yubormang.",
+        "account": "Kirish muammosini qachon sezganingizni va akkauntda qanday o'zgarishlar bo'lganini aniqlashtiring. Parol va tasdiqlash kodlari kerak emas.",
+        "appeal": "Cheklov sanasi, turi va unga shikoyat qilish sababini ko'rsating. Qarorni vakolatli mutaxassis qabul qiladi.",
+    },
+    "en": {
+        "payment": "For review, specify the payment date, amount and payment method. Do not send card numbers, CVV, passwords or verification codes.",
+        "account": "Specify when you noticed the access problem and what changes you observed in the account. Passwords and verification codes are not needed here.",
+        "appeal": "Specify the date and type of restriction and why you wish to appeal. An authorized specialist makes the decision.",
+    },
+    "es": {
+        "payment": "Indica la fecha, el importe y el método de pago para su revisión. No envíes números de tarjeta, CVV, contraseñas ni códigos de verificación.",
+        "account": "Aclara cuándo notaste el problema de acceso y qué cambios observaste en la cuenta. No se necesitan contraseñas ni códigos de verificación.",
+        "appeal": "Indica la fecha y el tipo de restricción y el motivo de tu apelación. La decisión corresponde a un especialista autorizado.",
+    },
+    "pt": {
+        "payment": "Para análise, informe a data, o valor e o método de pagamento. Não envie números de cartão, CVV, senhas ou códigos de verificação.",
+        "account": "Especifique quando percebeu o problema de acesso e quais mudanças observou na conta. Senhas e códigos de verificação não são necessários.",
+        "appeal": "Informe a data e o tipo de restrição e o motivo do recurso. Um especialista autorizado tomará a decisão.",
+    },
+}
+
+
 def approved_clauses(analysis: Analysis, citations: list[Citation], needs_human: bool) -> list[str]:
     """Only these complete, reviewed clauses may appear in the player-facing draft.
 
@@ -134,6 +189,13 @@ def approved_clauses(analysis: Analysis, citations: list[Citation], needs_human:
         clauses.append(t["help"])
     if needs_human:
         clauses.append(t["human"])
+    context = CONTEXT_CLAUSES[language]
+    if "payment" in analysis.sensitive or analysis.category.value == "report.payment":
+        clauses.append(context["payment"])
+    elif "ban" in analysis.sensitive:
+        clauses.append(context["appeal"])
+    elif "hack" in analysis.sensitive or analysis.category.value == "report.account":
+        clauses.append(context["account"])
     clauses.append(t["evidence"] if analysis.evidence_count else t["missing"])
     if citations:
         clauses.append(t["rules"] + ": " + ", ".join(f"[{c.id}]" for c in citations[:2]) + ".")
@@ -165,6 +227,7 @@ def validate_draft(draft: GeneratedDraft, citations: list[Citation], required: b
     # Fail closed: no blacklist can prove arbitrary multilingual free text safe.
     if allowed_clauses is None:
         allowed_clauses = [value for t in TEMPLATES.values() for key, value in t.items() if key != "rules"]
+        allowed_clauses.extend(value for phrases in CONTEXT_CLAUSES.values() for value in phrases.values())
         for t in TEMPLATES.values():
             if draft.cited:
                 allowed_clauses.append(t["rules"] + ": " + ", ".join(f"[{c}]" for c in draft.cited) + ".")
@@ -258,12 +321,21 @@ class DraftGenerator:
         usage = {"input": 0, "output": 0, "attempts": 0, "responses": 0, "complete": True}
         try:
             return await asyncio.wait_for(self._request(analysis, citations, needs_human, usage), timeout=cfg.groq_timeout_seconds)
-        except (asyncio.TimeoutError, httpx.HTTPError, ValueError, TypeError, KeyError, IndexError, AttributeError, ValidationError):
+        except (asyncio.TimeoutError, httpx.HTTPError, ValueError, TypeError, KeyError, IndexError, AttributeError, ValidationError) as exc:
             fallback.api_attempts = usage["attempts"]
             fallback.input_tokens, fallback.output_tokens = usage["input"], usage["output"]
             # Only recorded usage is known; an in-flight timeout or HTTP error remains unknown.
             fallback.cost_usd = self._cost(usage) if usage["complete"] and usage["responses"] == usage["attempts"] else None
             fallback.warnings.append("groq_unavailable_or_invalid_safe_fallback")
+            if isinstance(exc, (asyncio.TimeoutError, httpx.TimeoutException)):
+                reason = "groq_timeout"
+            elif isinstance(exc, httpx.HTTPStatusError):
+                reason = {401: "groq_auth_failed", 403: "groq_access_denied", 429: "groq_rate_limited"}.get(exc.response.status_code, "groq_http_error")
+            elif isinstance(exc, httpx.HTTPError):
+                reason = "groq_transport_error"
+            else:
+                reason = "groq_invalid_response"
+            fallback.warnings.append(reason)
             if fallback.cost_usd is None:
                 fallback.warnings.append("provider_attempted_total_cost_unknown")
             return fallback
@@ -278,6 +350,7 @@ class DraftGenerator:
 
     async def _request(self, analysis: Analysis, citations: list[Citation], needs_human: bool, usage: dict) -> GenerationResult:
         cfg = self.settings
+        deadline = time.monotonic() + cfg.groq_timeout_seconds
         if self.client is None:
             self.client = httpx.AsyncClient(timeout=cfg.groq_timeout_seconds, follow_redirects=False, trust_env=False)
         clauses = approved_clauses(analysis, citations, needs_human)
@@ -295,7 +368,7 @@ class DraftGenerator:
         )
         data = {"player_statement": redact_for_external(analysis.text), "language": analysis.language,
                 "category": analysis.category.value, "needs_human": needs_human, "evidence_count_only": analysis.evidence_count,
-                "policy": [{"id": c.id, "section": c.section, "text": c.text[:3000]} for c in citations[:3]],
+                "policy": [{"id": c.id, "section": c.section, "text": redact_for_external(c.text[:3000])} for c in citations[:3]],
                 "approved_clauses": [{"id": index, "text": text} for index, text in enumerate(clauses)],
                 "approved_citations": cited}
         # GPT-OSS strict schema + low reasoning are supported by the official Groq API.
@@ -313,7 +386,10 @@ class DraftGenerator:
                 if response.status_code >= 400:
                     usage["complete"] = False
                 if response.status_code in {429, 500, 502, 503, 504} and attempt < cfg.groq_max_retries:
-                    await asyncio.sleep(0.1 * (attempt + 1))
+                    delay = retry_delay(response.headers.get("Retry-After"), 0.1 * (attempt + 1))
+                    if delay >= deadline - time.monotonic():
+                        response.raise_for_status()
+                    await asyncio.sleep(delay)
                     continue
                 response.raise_for_status()
                 body = response.json()
@@ -324,15 +400,18 @@ class DraftGenerator:
                     if billed is not None or (isinstance(body, dict) and "usage" in body):
                         raise ValueError("Invalid provider usage")
                 else:
-                    inp, out = int(billed["prompt_tokens"]), int(billed["completion_tokens"])
-                    if not 0 <= inp <= 1_000_000 or not 0 <= out <= 1_000_000:
+                    inp, out = billed["prompt_tokens"], billed["completion_tokens"]
+                    if type(inp) is not int or type(out) is not int or not 0 <= inp <= 1_000_000 or not 0 <= out <= 1_000_000:
                         usage["complete"] = False
                         raise ValueError("Invalid provider token count")
                     usage["input"] += inp
                     usage["output"] += out
                 if not isinstance(body, dict) or not isinstance(body.get("choices"), list) or not body["choices"]:
                     raise ValueError("Invalid provider envelope")
-                message = body["choices"][0]["message"]["content"]
+                envelope = body["choices"][0]["message"]
+                if envelope.get("refusal"):
+                    raise ValueError("Provider refusal")
+                message = envelope["content"]
                 if not isinstance(message, str) or len(message) > 16_000:
                     raise ValueError("Invalid provider draft size")
                 if body["choices"][0].get("finish_reason") in {"length", "content_filter", "tool_calls"}:

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import os
+import math
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlsplit
 
 
 def flag(name: str, default: bool = False) -> bool:
@@ -12,12 +15,12 @@ def flag(name: str, default: bool = False) -> bool:
 @dataclass(frozen=True)
 class Settings:
     mode: str = field(default_factory=lambda: os.getenv("APP_MODE", "demo"))
-    database_path: str = field(default_factory=lambda: os.getenv("DATABASE_PATH", "/tmp/grandmobile/copilot.sqlite3"))
+    database_path: str = field(default_factory=lambda: os.getenv("DATABASE_PATH") or str(Path(tempfile.gettempdir()) / "grandmobile" / "copilot.sqlite3"))
     rules_path: str | None = field(default_factory=lambda: os.getenv("RULES_PATH") or None)
     taxonomy_path: str | None = field(default_factory=lambda: os.getenv("TAXONOMY_PATH") or None)
-    api_token: str | None = field(default_factory=lambda: os.getenv("API_TOKEN") or None)
+    api_token: str | None = field(default_factory=lambda: os.getenv("API_TOKEN") or None, repr=False)
     enable_groq: bool = field(default_factory=lambda: flag("ENABLE_GROQ"))
-    groq_api_key: str | None = field(default_factory=lambda: os.getenv("GROQ_API_KEY") or None)
+    groq_api_key: str | None = field(default_factory=lambda: os.getenv("GROQ_API_KEY") or None, repr=False)
     groq_model: str = field(default_factory=lambda: os.getenv("GROQ_MODEL", "openai/gpt-oss-20b"))
     groq_timeout_seconds: float = field(default_factory=lambda: float(os.getenv("GROQ_TIMEOUT_SECONDS", "4")))
     groq_max_retries: int = field(default_factory=lambda: int(os.getenv("GROQ_MAX_RETRIES", "1")))
@@ -30,6 +33,7 @@ class Settings:
     max_request_bytes: int = 131_072
     cache_capacity: int = 512
     request_rate_per_minute: int = field(default_factory=lambda: int(os.getenv("REQUEST_RATE_PER_MINUTE", "120")))
+    sqlite_busy_timeout_seconds: float = field(default_factory=lambda: float(os.getenv("SQLITE_BUSY_TIMEOUT_SECONDS", "1")))
     # Сколько обращений одного игрока за час считаются нормой; следующие помечаются как флуд.
     flood_limit_per_hour: int = field(default_factory=lambda: int(os.getenv("FLOOD_LIMIT_PER_HOUR", "5")))
 
@@ -48,5 +52,23 @@ class Settings:
             raise ValueError("Production requires a private, approved RULES_PATH")
         if not 1 <= self.flood_limit_per_hour <= 1000:
             raise ValueError("FLOOD_LIMIT_PER_HOUR must be between 1 and 1000")
+        if not 1 <= self.request_rate_per_minute <= 10_000:
+            raise ValueError("REQUEST_RATE_PER_MINUTE must be between 1 and 10000")
+        if not 0.05 <= self.sqlite_busy_timeout_seconds <= 5:
+            raise ValueError("SQLITE_BUSY_TIMEOUT_SECONDS must be between 0.05 and 5")
+        if not 1024 <= self.max_request_bytes <= 1_048_576:
+            raise ValueError("max_request_bytes must be between 1024 and 1048576")
+        if not 1 <= self.cache_capacity <= 10_000:
+            raise ValueError("cache_capacity must be between 1 and 10000")
+        for price in (self.groq_input_usd_per_million, self.groq_output_usd_per_million):
+            if price is not None and (not math.isfinite(price) or price < 0):
+                raise ValueError("Groq token prices must be finite non-negative numbers")
+        for origin in self.cors_origins:
+            parsed = urlsplit(origin)
+            if (parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.path or
+                    parsed.query or parsed.fragment or parsed.username or parsed.password or "*" in origin):
+                raise ValueError("CORS_ORIGINS must contain explicit HTTP origins without paths or wildcards")
         if self.frontend_dist and not Path(self.frontend_dist).is_dir():
             raise ValueError("FRONTEND_DIST must be an existing frontend build directory")
+        if self.frontend_dist and not (Path(self.frontend_dist) / "index.html").is_file():
+            raise ValueError("FRONTEND_DIST must contain a built index.html")

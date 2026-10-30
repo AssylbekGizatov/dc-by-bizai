@@ -129,7 +129,7 @@ class ReviewRequest(StrictModel):
     draft_reply: str | None = Field(default=None, min_length=1, max_length=5000)
     status: Status | None = None
     reviewer_note: str | None = Field(default=None, max_length=3000)
-    expected_revision: int | None = Field(default=None, ge=1)
+    expected_revision: int | None = Field(default=None, ge=1, strict=True)
 
     @model_validator(mode="after")
     def nonempty(self) -> "ReviewRequest":

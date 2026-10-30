@@ -23,22 +23,23 @@
     </div>
   </header>
   <div id="workspace" tabindex="-1"></div>
+  <div class="service-notice wrap" id="service-notice" role="status" hidden></div>
   <main class="wrap analyze-layout" id="view-analyze">
-    <div class="page-heading"><div><p class="eyebrow">Поддержка игроков / анализ</p><h1>Анализ обращения</h1></div><p class="page-caption">От исходного текста до проверенного ответа.</p></div>
-    <section class="intake" aria-labelledby="in-h">
-      <div class="section-heading"><span class="section-no">01</span><h2 id="in-h">Новое обращение</h2></div>
+    <div class="page-heading"><div><h1>Анализ обращения</h1><p>Создайте обращение. Проверьте сведения, источники и ответ.</p></div><div class="heading-actions"><button class="secondary" id="intake-toggle" type="button" aria-expanded="true" aria-controls="intake-section" hidden>Скрыть форму</button><a class="quiet-link" href="#queue">Открыть очередь <span aria-hidden="true">→</span></a></div></div>
+    <section class="intake" id="intake-section" aria-labelledby="in-h">
+      <div class="section-heading"><h2 id="in-h">Новое обращение</h2></div>
       <form id="form" novalidate>
         <fieldset class="kind"><legend>Источник</legend>
           <label><input type="radio" name="kind" value="complaint" checked><span>Жалоба<small>Из лаунчера</small></span></label>
           <label><input type="radio" name="kind" value="report"><span>Репорт<small>Из игры</small></span></label>
         </fieldset>
-        <label class="field"><span>Текст игрока</span><textarea id="text" rows="7" maxlength="4000" placeholder="Вставьте обращение как есть — с опечатками и заменами символов."></textarea></label>
+        <label class="field"><span>Текст игрока <small id="text-count">0 / 4 000</small></span><textarea id="text" rows="7" maxlength="4000" required aria-describedby="text-hint" placeholder="Вставьте обращение как есть — с опечатками и заменами символов."></textarea></label><p class="field-hint" id="text-hint">Исходный текст сохранится без изменений.</p>
         <label class="field"><span>ID игрока <small>необязательно</small></span><input id="player" type="text" maxlength="64" autocomplete="off" placeholder="Для поиска повторных обращений"></label>
         <div class="row2">
-          <label class="field"><span>Скриншотов</span><input id="att" type="number" min="0" max="50" value="0" inputmode="numeric"></label>
+          <label class="field"><span>Вложений</span><input id="att" type="number" min="0" max="50" value="0" inputmode="numeric" aria-describedby="attachment-hint"></label>
           <label class="field"><span>Язык сервера</span><select id="srv"><option value="ru">Русский</option><option value="kk">Казахский</option><option value="uz">Узбекский</option><option value="en">Английский</option><option value="es">Испанский</option><option value="pt">Португальский</option></select></label>
         </div>
-        <p class="field-hint">Передаётся только количество вложений. Их содержимое не анализируется.</p>
+        <p class="field-hint" id="attachment-hint">Только количество. Содержимое вложений сервису недоступно.</p>
         <p class="error" id="form-error" role="alert" hidden></p>
         <div class="intake-action"><button class="primary" type="submit" id="go">Проанализировать <span class="arrow" aria-hidden="true"></span></button><span>Сохранится в очереди при подключении к API</span></div>
       </form>
@@ -46,13 +47,13 @@
       <div class="history" id="history" hidden><h2>В этой сессии</h2><ul id="history-list"></ul></div>
     </section>
     <section class="document" id="out" aria-labelledby="out-h" aria-live="polite">
-      <div class="section-heading"><span class="section-no">02</span><h2 id="out-h">Разбор обращения</h2><span class="doc-tag">Ожидает текст</span></div>
-      <div class="empty-document"><span class="empty-index" aria-hidden="true"></span><h3>Разбор появится здесь.</h3><p>Добавьте обращение слева. Здесь появятся разбор, найденные правила и черновик для проверки.</p><ol><li><span>01</span>Язык, категория и приоритет</li><li><span>02</span>Факты из текста и источники</li><li><span>03</span>Черновик без автоматической отправки</li></ol></div>
-      <p class="document-footnote">Обвинение игрока — не подтверждённое нарушение. Решения о санкциях, платежах и доступе принимает специалист.</p>
+      <div class="section-heading"><h2 id="out-h">Рабочий разбор</h2><span class="doc-tag">Нет обращения</span></div>
+      <div class="empty-document"><h3>Сначала — текст игрока</h3><p>После анализа здесь можно сравнить исходное обращение, сведения и правила с предложенным ответом.</p><div class="empty-workspace"><section><h4>Обращение и сведения</h4><p>Язык сообщения, категория, приоритет и происхождение извлечённых данных.</p></section><section><h4>Источники и ответ</h4><p>Найденные пункты с разделами и черновик на языке игрока.</p></section></div></div>
+      <p class="document-footnote">Решение остаётся за администратором. Сервис не проверяет доказательства и не выполняет действия в игре.</p>
     </section>
   </main>
   <main class="wrap queue-layout" id="view-queue" hidden>
-    <div class="page-heading"><div><p class="eyebrow">Поддержка игроков / проверка</p><h1>Очередь администратора</h1></div><p class="page-caption">Один контекст. Один ответ.<br>Каждая правка сохраняется.</p></div>
+    <div class="page-heading"><div><h1>Очередь администратора</h1><p>Выберите обращение, проверьте ответ и сохраните решение.</p></div><a class="secondary" href="#">Новое обращение</a></div>
     <section id="q-list" aria-label="Список обращений"></section>
     <section class="document" id="q-detail" aria-live="polite"></section>
   </main>

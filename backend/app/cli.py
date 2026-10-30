@@ -19,6 +19,7 @@ from pydantic import ValidationError
 from .config import Settings
 from .schemas import TriageRequest
 from .service import CopilotService
+from .private_files import restrict_private_file
 
 
 INFERENCE_FIELDS = {"ticket_id", "kind", "created_at", "region", "server_lang", "reporter_hash", "reported_hash",
@@ -55,6 +56,7 @@ async def run(args: argparse.Namespace) -> int:
     svc = CopilotService(settings)
     public_refs = {rule.ref for rule in svc.index.rules if rule.ref != "section"}
     counts, languages, categories, priorities = Counter(), Counter(), Counter(), Counter()
+    review_reasons, generation_modes = Counter(), Counter()
     latencies = []
     begin = time.perf_counter()
     output = Path(args.output)
@@ -64,6 +66,7 @@ async def run(args: argparse.Namespace) -> int:
     opener = gzip.open if str(args.input).endswith(".gz") else open
     temporary = tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=output.parent, prefix=".copilot-", suffix=".tmp", delete=False)
     temporary_path = Path(temporary.name)
+    restrict_private_file(temporary_path)
     sink = temporary if args.command == "predict" else None
     completed = False
     try:
@@ -95,12 +98,15 @@ async def run(args: argparse.Namespace) -> int:
                 languages[result.lang] += 1
                 categories[result.category.value] += 1
                 priorities[result.priority] += 1
+                review_reasons.update(result.reasons)
+                generation_modes[ticket.diagnostics.generation_mode] += 1
                 latencies.append(ticket.diagnostics.timings_ms["total"])
         elapsed = time.perf_counter() - begin
         summary = {"schema_version": "1.0", "mode": "offline_local_encoder" if svc.index.encoder else "offline_local_baseline", "external_api_calls": 0,
                    "classifier_mode": svc.health()["classifier_mode"], "retrieval_mode": svc.index.method,
                    "counts": dict(counts), "languages_predicted": dict(languages), "categories_predicted": dict(categories),
                    "priorities_predicted": dict(priorities), "elapsed_seconds": round(elapsed, 4),
+                   "review_reasons_nonexclusive": dict(review_reasons), "generation_modes": dict(generation_modes),
                    "latency_ms": {"p50": float(np.percentile(latencies, 50)) if latencies else None,
                                   "p95": float(np.percentile(latencies, 95)) if latencies else None,
                                   "max": max(latencies) if latencies else None},

@@ -56,7 +56,8 @@
 
   /** Простое определение языка для проверки черновика. Возвращает und при сомнении. */
   function detectLang(text) {
-    const t = (text || '').toLowerCase();
+    // Nicknames and links carry identity, not the player's language.
+    const t = (text || '').replace(/https?:\/\/\S+/giu, ' ').replace(/[\p{L}\d]+_[\p{L}\d_]+/gu, ' ').toLowerCase().replace(/[’ʼ`]/g, "'");
     const cyr = (t.match(/[а-яёәғқңөұүһіў]/g) || []).length;
     const lat = (t.match(/[a-zñçãõáéíóúʻ‘']/g) || []).length;
     if (cyr + lat < 12) return 'und';

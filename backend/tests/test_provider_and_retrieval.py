@@ -91,7 +91,7 @@ def test_collision_and_context(tmp_path):
         {'id':41,'category':'Synthetic business war','text':'','points':[{'ref':'2.1','text':'Только на мероприятии бизнес война оскорбление лидеров и нецензурная лексика запрещены.'}]},
         {'id':43,'category':'Synthetic glossary','text':'Синтетическое определение терминов, не запрет.','points':[]},
     ]}
-    path=tmp_path/'fixture.json'; path.write_text(json.dumps(fixture,ensure_ascii=False))
+    path=tmp_path/'fixture.json'; path.write_text(json.dumps(fixture,ensure_ascii=False), encoding='utf-8')
     index=RuleIndex(str(path))
     assert {'30:2.1','41:2.1','43:section'} == set(index.by_id)
     assert index.unresolved_references(['2.1']) == ['2.1']
@@ -225,7 +225,7 @@ def test_public_citations_are_rule_refs_with_section_label(tmp_path):
         {'id':31,'category':'Synthetic complaints','points':[{'ref':'2.1','text':'Синтетическое правило жалоб.'}]},
         {'id':43,'category':'Synthetic glossary','text':'Синтетическое определение терминов.','points':[]},
     ]}
-    path=tmp_path/'fixture.json'; path.write_text(json.dumps(fixture,ensure_ascii=False))
+    path=tmp_path/'fixture.json'; path.write_text(json.dumps(fixture,ensure_ascii=False), encoding='utf-8')
     index=RuleIndex(str(path))
     draft=GeneratedDraft(text='Пункты: [30:2.1], [31:2.1], [43:section].',cited=['30:2.1','31:2.1','43:section'])
     text,cited=public_citations(draft,index.by_id)

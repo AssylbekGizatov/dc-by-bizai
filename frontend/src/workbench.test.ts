@@ -71,6 +71,39 @@ async function start(hash = '#queue/synthetic-ticket', demo = false) {
 const patches = () => fetchMock.mock.calls.filter(([, options]) => options?.method === 'PATCH')
 
 describe('vanilla workbench API integration', () => {
+  it('does not silently switch to browser demo when the real API is unavailable', async () => {
+    fetchMock.mockRejectedValue(new TypeError('Synthetic offline'))
+    await start('')
+    const ui = (window as unknown as {SC: {ui: {mode: () => string}}}).SC.ui
+    expect(ui.mode()).toBe('live')
+    expect($('#mode').textContent).toContain('недоступен')
+    $<HTMLTextAreaElement>('#text').value = '[Synthetic test] Please help.'
+    fireEvent.submit($('#form'))
+    await waitFor(() => expect($('#form-error').hidden).toBe(false))
+    expect($('#history-list').children).toHaveLength(0)
+  })
+
+  it('keeps 401 in API mode and preserves the submitted player text', async () => {
+    const fallback = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation((input, options) => options?.method === 'POST'
+      ? Promise.resolve(json({detail: 'Synthetic expired token'}, 401)) : fallback(input, options))
+    await start('')
+    $<HTMLTextAreaElement>('#text').value = '[Synthetic test] Please help.'
+    fireEvent.submit($('#form'))
+    await waitFor(() => expect($('#form-error').textContent).toContain('токен'))
+    expect($<HTMLTextAreaElement>('#text').value).toBe('[Synthetic test] Please help.')
+    expect($('#history-list').children).toHaveLength(0)
+  })
+
+  it('rejects out-of-range attachment counts instead of silently normalizing them', async () => {
+    await start('')
+    $<HTMLTextAreaElement>('#text').value = '[Synthetic test] Please help.'
+    $<HTMLInputElement>('#att').value = '-1'
+    fireEvent.submit($('#form'))
+    expect($('#form-error').hidden).toBe(false)
+    expect(fetchMock.mock.calls.some(([, options]) => options?.method === 'POST')).toBe(false)
+  })
+
   it('keeps player identity and complete intake fields on POST /api/tickets', async () => {
     await start('')
     $<HTMLTextAreaElement>('#text').value = '[Synthetic test] Character is stuck.'
@@ -168,7 +201,7 @@ describe('vanilla workbench API integration', () => {
     fireEvent.input($('#q-note'), {target: {value: 'Synthetic manual-review reason'}})
     fireEvent.click(detail().getByRole('button', {name: 'Эскалировать'}))
     await waitFor(() => expect(patches()).toHaveLength(1))
-    expect(JSON.parse(String(patches()[0][1]?.body))).toMatchObject({status: 'escalated', reviewer_note: 'Synthetic manual-review reason', expected_revision: 3})
+    expect(JSON.parse(String(patches()[0][1]?.body))).toMatchObject({status: 'escalated', reviewer_note: 'Synthetic moderator note\n\nSynthetic manual-review reason', expected_revision: 3})
   })
 
   it('requires explicit simulation consent and performs only a review PATCH', async () => {
@@ -209,6 +242,65 @@ describe('vanilla workbench API integration', () => {
     expect(location.hash).toBe('#queue/synthetic-ticket')
     expect(draft().value).toBe('Synthetic dirty navigation draft')
     expect($('#view-queue').hidden).toBe(false)
+  })
+
+  it('sends search and filters to the server rather than filtering only one loaded page', async () => {
+    await start('#queue')
+    await waitFor(() => expect($('#queue-search')).toBeTruthy())
+    fireEvent.input($('#queue-search'), {target:{value:'Synthetic needle'}})
+    fireEvent.submit($('.queue-search'))
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes('search=Synthetic+needle'))).toBe(true))
+    fireEvent.click(within($('#q-list')).getByRole('button', {name:'Нужен человек'}))
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes('needs_human=true'))).toBe(true))
+    fireEvent.click(within($('#q-list')).getByRole('button', {name:'Срочные P0–P1'}))
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).includes('urgent=true'))).toBe(true))
+  })
+
+  it('preserves a moderator note in conflict recovery and can restore both edits', async () => {
+    await start()
+    const fallback=fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async(input,options)=>{
+      if(options?.method==='PATCH'){current=syntheticTicket(9);return json({detail:'Synthetic conflict'},409)}
+      return fallback(input,options)
+    })
+    fireEvent.click(detail().getByRole('button',{name:'Править'}))
+    fireEvent.input(draft(),{target:{value:'Synthetic human draft'}})
+    fireEvent.input($('#q-admin-note'),{target:{value:'Synthetic unsaved moderator note'}})
+    fireEvent.click(detail().getByRole('button',{name:'Сохранить правку'}))
+    await waitFor(()=>expect($<HTMLTextAreaElement>('[aria-label="Несохранённая заметка"]')?.value).toBe('Synthetic unsaved moderator note'))
+    fireEvent.click(detail().getByRole('button',{name:'Вернуть мой вариант в редактор'}))
+    expect(draft().value).toBe('Synthetic human draft')
+    expect($<HTMLTextAreaElement>('#q-admin-note').value).toBe('Synthetic unsaved moderator note')
+  })
+
+  it('keeps unsaved note and draft when an escalation is canceled', async () => {
+    await start()
+    fireEvent.click(detail().getByRole('button',{name:'Править'}))
+    fireEvent.input(draft(),{target:{value:'Synthetic edit before escalation'}})
+    fireEvent.input($('#q-admin-note'),{target:{value:'Synthetic unsaved note before escalation'}})
+    fireEvent.click(detail().getByRole('button',{name:'Эскалировать'}))
+    fireEvent.input($('#q-note'),{target:{value:'Synthetic canceled escalation reason'}})
+    fireEvent.click(detail().getByRole('button',{name:'Отмена'}))
+    expect(draft().value).toBe('Synthetic edit before escalation')
+    expect($<HTMLTextAreaElement>('#q-admin-note').value).toBe('Synthetic unsaved note before escalation')
+  })
+
+  it('reopens a protected deep link after the administrator enters a token', async () => {
+    current={...syntheticTicket(),id:'synthetic-auth'}
+    const fallback=fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation((input,options)=>{
+      if(String(input)==='/api/health') return Promise.resolve(json({status:'ok',auth_required:true}))
+      if(!new Headers(options?.headers).has('Authorization')) return Promise.resolve(json({detail:'Synthetic token required'},401))
+      if(String(input)==='/api/tickets/synthetic-auth') return Promise.resolve(json(current))
+      return fallback(input,options)
+    })
+    await start('#queue/synthetic-auth')
+    await waitFor(()=>expect(detail().getByRole('alert')).toBeTruthy())
+    fireEvent.click($('#connection-open'))
+    fireEvent.input($('#api-token'),{target:{value:'synthetic-valid-admin-token'}})
+    fireEvent.submit($('#connection-form'))
+    await waitFor(()=>expect(draft()?.value).toBe('Synthetic draft revision 3'))
+    expect(detail().getByRole('button',{name:'Править'})).toBeTruthy()
   })
 
   it('keeps the admin token in memory and sends it only in request headers', async () => {

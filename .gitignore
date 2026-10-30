@@ -59,5 +59,8 @@ coverage/
 *.key
 .railway/
 compose.private.yaml
+.agents/
+.codex/
+.impeccable/
 playwright-report/
 test-results/

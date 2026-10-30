@@ -27,7 +27,7 @@ class CopilotService:
         if settings.mode == "production" and self.index.synthetic:
             raise ValueError("Production cannot use synthetic policies")
         self.classifier = LocalIntentClassifier(self.index.encoder) if self.index.encoder else None
-        self.store = TicketStore(settings.database_path)
+        self.store = TicketStore(settings.database_path, busy_timeout_seconds=settings.sqlite_busy_timeout_seconds)
         self.generator = generator or DraftGenerator(settings)
         self.cache: OrderedDict[str, tuple] = OrderedDict()
         self.metrics = Counter()
@@ -35,8 +35,10 @@ class CopilotService:
         self._create_lock = asyncio.Lock()
 
     async def close(self) -> None:
-        await self.generator.close()
-        self.store.close()
+        try:
+            await self.generator.close()
+        finally:
+            self.store.close()
 
     def health(self) -> dict:
         return {"status": "ok", "mode": self.settings.mode, "auth_required": bool(self.settings.api_token),
@@ -116,45 +118,55 @@ class CopilotService:
                     self.cache.popitem(last=False)
             generation_ms = (time.perf_counter() - generation_started) * 1000
             warnings.extend(generation.warnings)
-            stamp = request.created_at.timestamp() if request.created_at and request.created_at.tzinfo else (
-                request.created_at.replace(tzinfo=timezone.utc).timestamp() if request.created_at else None)
-            repeat = self.store.check_repeat(request.reporter_hash, analysis.text, stamp)
-            duplicate = repeat.duplicate
-            flood = repeat.position > self.settings.flood_limit_per_hour
-            if duplicate:
-                reasons.append("Повтор того же заявителя по той же проблеме в течение часа")
-            if flood:
-                reasons.append(f"Флуд: {repeat.position}-е обращение этого игрока за час (лимит {self.settings.flood_limit_per_hour})")
-                self.metrics["flood"] += 1
-            if analysis.spam:
-                reasons.append("Повторяющийся или массовый текст: вероятный спам")
-            # Spam/duplicate/flood is a queue signal, never deletion, rejection or automatic penalty.
-            needs_human = needs_human or duplicate or flood or analysis.spam
-            public_text, public_cited = public_citations(generation.draft, self.index.by_id)
-            result = TriageResponse(lang=analysis.language, category=analysis.category, priority=analysis.priority,
-                is_spam_or_duplicate=duplicate or flood or analysis.spam, extracted=analysis.extracted,
-                draft_reply=DraftReply(lang=reply_lang, text=public_text, cited=public_cited),
-                needs_human=needs_human, confidence=round(analysis.confidence, 3), reasons=reasons)
-            total_ms = (time.perf_counter() - started) * 1000
-            diagnostics = Diagnostics(language_method="unicode+local_lexical_v1", classifier_method="local_e5_prototypes+regex_v1" if self.classifier else "local_regex_taxonomy_v1",
-                retrieval_method=self.index.method, generation_mode=generation.mode, normalizations=analysis.normalizations,
-                warnings=warnings, timings_ms={"nlp": round(nlp_ms, 3), "retrieval": round(retrieval_ms, 3),
-                "generation": round(generation_ms, 3), "total": round(total_ms, 3)},
-                tokens={"input": 0 if cached else generation.input_tokens, "output": 0 if cached else generation.output_tokens},
-                estimated_cost_usd=0.0 if cached else generation.cost_usd, cache_hit=bool(cached), removed_admin_messages=analysis.removed_admin_messages)
-            ticket = Ticket(id=str(uuid.uuid4()), text="\n".join(m.text for m in request.messages if m.role == "player"),
-                normalized_text=analysis.text, kind=request.kind, created_at=datetime.now(timezone.utc).isoformat(),
-                status="pending", player_id=request.reporter_hash, server=analysis.extracted.server,
-                attachments_count=analysis.evidence_count, result=result, citations=citations, draft_reply=public_text,
-                diagnostics=diagnostics)
-            self.metrics["tickets_processed"] += 1
-            self.metrics["needs_human"] += int(needs_human)
-            self.metrics["spam_or_duplicate"] += int(result.is_spam_or_duplicate)
+            # Provider work is charged even if a later storage transaction fails.
             self.metrics["groq_calls_accepted"] += int(generation.mode.startswith("groq:") and not cached)
             self.metrics["groq_api_attempts"] += 0 if cached else generation.api_attempts
             self.metrics["fallbacks"] += int(any("fallback" in w for w in generation.warnings))
+            stamp = request.created_at.timestamp() if request.created_at and request.created_at.tzinfo else (
+                request.created_at.replace(tzinfo=timezone.utc).timestamp() if request.created_at else None)
+            # No network/model await occurs while holding the SQLite write lock.
+            # Repeat observation and ticket/idempotency insertion either all commit,
+            # or all roll back. Batch inference keeps its repeat history without tickets.
+            with self.store.write_transaction():
+                if persist and key:
+                    existing = self.store.existing(key, request_hash)
+                    if existing is not None:
+                        self.metrics["idempotency_hits"] += 1
+                        return existing
+                repeat = self.store.check_repeat(request.reporter_hash, analysis.text, stamp)
+                duplicate = repeat.duplicate
+                flood = repeat.position > self.settings.flood_limit_per_hour
+                if duplicate:
+                    reasons.append("Повтор того же заявителя по той же проблеме в течение часа")
+                if flood:
+                    reasons.append(f"Флуд: {repeat.position}-е обращение этого игрока за час (лимит {self.settings.flood_limit_per_hour})")
+                if analysis.spam:
+                    reasons.append("Повторяющийся или массовый текст: вероятный спам")
+                # Spam/duplicate/flood is a queue signal, never deletion, rejection or automatic penalty.
+                needs_human = needs_human or duplicate or flood or analysis.spam
+                public_text, public_cited = public_citations(generation.draft, self.index.by_id)
+                result = TriageResponse(lang=analysis.language, category=analysis.category, priority=analysis.priority,
+                    is_spam_or_duplicate=duplicate or flood or analysis.spam, extracted=analysis.extracted,
+                    draft_reply=DraftReply(lang=reply_lang, text=public_text, cited=public_cited),
+                    needs_human=needs_human, confidence=round(analysis.confidence, 3), reasons=reasons)
+                total_ms = (time.perf_counter() - started) * 1000
+                diagnostics = Diagnostics(language_method="unicode+identifier_masked_local_lexical_v2", classifier_method="local_e5_prototypes+regex_v2" if self.classifier else "local_regex_taxonomy_v2",
+                    retrieval_method=self.index.method, generation_mode=generation.mode, normalizations=analysis.normalizations,
+                    warnings=warnings, timings_ms={"nlp": round(nlp_ms, 3), "retrieval": round(retrieval_ms, 3),
+                    "generation": round(generation_ms, 3), "total": round(total_ms, 3)},
+                    tokens={"input": 0 if cached else generation.input_tokens, "output": 0 if cached else generation.output_tokens},
+                    estimated_cost_usd=0.0 if cached else generation.cost_usd, cache_hit=bool(cached), removed_admin_messages=analysis.removed_admin_messages)
+                ticket = Ticket(id=str(uuid.uuid4()), text="\n".join(m.text for m in request.messages if m.role == "player"),
+                    normalized_text=analysis.text, kind=request.kind, created_at=datetime.now(timezone.utc).isoformat(),
+                    status="pending", player_id=request.reporter_hash, server=analysis.extracted.server,
+                    attachments_count=analysis.evidence_count, result=result, citations=citations, draft_reply=public_text,
+                    diagnostics=diagnostics)
+                if persist:
+                    ticket = self.store.add(ticket, key, request_hash)
+            self.metrics["flood"] += int(flood)
+            self.metrics["tickets_processed"] += 1
+            self.metrics["needs_human"] += int(needs_human)
+            self.metrics["spam_or_duplicate"] += int(result.is_spam_or_duplicate)
             self.latencies.append(total_ms)
             self.latencies = self.latencies[-10_000:]
-            if persist:
-                self.store.add(ticket, key, request_hash)
             return ticket

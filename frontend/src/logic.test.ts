@@ -46,6 +46,10 @@ describe('cp1251 в казахском тексте', () => {
 })
 
 describe('язык обращения', () => {
+  it('does not count a long Latin nickname or link as the language of Russian text', () => {
+    expect(L.detectLang('Christopher_Alexander_Washington помогите мне выйти из текстур')).toBe('ru')
+    expect(L.detectLang('Iltimos, yordam kerak, men o’yinda qoldim')).toBe('uz')
+  })
   it('различает казахский, русский и английский', () => {
     expect(L.detectLang('Сәлеметсіз бе, мен ойында қалып қойдым көмектесіңізші')).toBe('kk')
     expect(L.detectLang('Помогите, застрял в текстурах и не могу выйти')).toBe('ru')

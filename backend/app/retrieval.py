@@ -16,7 +16,7 @@ import numpy as np
 from rank_bm25 import BM25Okapi
 from sklearn.feature_extraction.text import TfidfVectorizer
 
-from .nlp import Analysis, normalize, words
+from .nlp import Analysis, COMPILED, INJECTION, UZBEK_CYRILLIC, normalize, uzbek_search_form, without_identifiers, words
 from .schemas import Category, Citation
 
 
@@ -49,6 +49,21 @@ EXPANSIONS = {
 def tokenize(text: str) -> list[str]:
     # Mild character-prefix normalization improves morphology without downloaded models.
     return [w[:7] for w in words(text) if len(w) >= 2]
+
+
+def retrieval_topic(analysis: Analysis) -> str:
+    """The report channel has one complaint label, but retrieval needs its topic.
+
+    This is query expansion from observed local signals, never a player-supplied
+    rule number or an administrator's historical answer.
+    """
+    if analysis.category != Category.complaint:
+        return analysis.category.value
+    text = without_identifiers(analysis.text)
+    if analysis.language == "uz" or UZBEK_CYRILLIC.search(text):
+        text += " " + uzbek_search_form(text)
+    topic = next((name for name in ("admin", "cheat", "scam", "rmt_ads", "insult", "dm") if COMPILED[name].search(text)), None)
+    return "complaint." + topic if topic else analysis.category.value
 
 
 class LocalEncoder:
@@ -92,9 +107,15 @@ class RuleIndex:
         for section in data.get("rules", []):
             section_id = str(section["id"])
             title = str(section.get("category", section_id))
+            if not re.fullmatch(r"[\w.-]{1,64}", section_id) or not title.strip() or len(title) > 300:
+                raise ValueError("Invalid rule section identifier or title")
+            if any(ord(c) < 32 for c in title) or "[" in title or "]" in title:
+                raise ValueError("Rule section titles must be plain single-line labels")
             for point in section.get("points", []):
                 ref = str(point["ref"]).strip()
                 text = str(point["text"]).strip()
+                if not re.fullmatch(r"[\w.-]{1,64}", ref):
+                    raise ValueError("Rule references must be plain identifiers")
                 key = f"{section_id}:{ref}"
                 if key in seen:
                     raise ValueError(f"Duplicate compound rule ID: {key}")
@@ -125,7 +146,7 @@ class RuleIndex:
     def relevant(self, rule: Citation, analysis: Analysis) -> bool:
         # Scope-specific policy cannot be applied merely because it contains a keyword.
         section_id = rule.id.split(":", 1)[0]
-        scope_terms = {"32": ("зел", "зон", "gz", "green"), "33": ("лидер", "замест"),
+        scope_terms = {"32": ("зел", "зон", "gz", "green", "жасыл", "yashil", "яшил"), "33": ("лидер", "замест"),
                        "34": ("гос", "полици", "фракц"), "35": ("волн", "департам"),
                        "36": ("семейн", "мероприят"), "40": ("опг", "банд", "мафи"),
                        "41": ("бизнес", "войн"), "42": ("фургон", "битв")}
@@ -135,6 +156,8 @@ class RuleIndex:
             return False  # glossary context is not a numbered prohibition
         content = normalize(rule.text)[0].casefold()
         query = analysis.text.casefold()
+        if INJECTION.search(content) or INJECTION.search(rule.section):
+            return False  # Retrieved documents are data, not application instructions.
         # Complaint formatting is not evidence that the underlying player broke a rule.
         if section_id == "31" and analysis.category != Category.invalid:
             if not (analysis.category == Category.help and "техническ" in content and "поддержк" in content):
@@ -143,6 +166,7 @@ class RuleIndex:
             return "техническ" in content and any(w in content for w in ("поддержк", "помощ"))
         # Topic-conditioned clauses must not become blanket prohibitions in a draft.
         conditions = [
+            (("за реальные деньги", "за реальную валюту"), ("реаль", "за реал", "rmt", "real money", "нақты ақша", "haqiqiy pul", "реал пул")),
             (("никнейм", "имени персонажа", "никнейма"), ("никнейм", "ник ", "ник:", "nickname", "username", "аты")),
             (("номерных знаках", "номерного знака"), ("номер", "plate", "нөмір")),
             (("названия семей", "названия семьи"), ("назван", "назва", "атал", "family name")),
@@ -154,23 +178,30 @@ class RuleIndex:
         for contextual, signals in conditions:
             if any(marker in content for marker in contextual) and not any(signal in query for signal in signals):
                 return False
-        anchors = ANCHORS.get(analysis.category.value, ())
+        anchors = ANCHORS.get(retrieval_topic(analysis), ())
         if anchors:
             return any((anchor in words(content) if len(anchor) <= 3 else anchor in content) for anchor in anchors)
         q = set(tokenize(analysis.text))
         return len(q & set(tokenize(content))) >= 2
 
-    def retrieve(self, analysis: Analysis, top_k: int = 3) -> list[Citation]:
+    def retrieve(self, analysis: Analysis, top_k: int = 3, *, strategy: str | None = None) -> list[Citation]:
+        strategy = strategy or ("hybrid_e5" if self.encoder is not None else "hybrid")
+        if strategy not in {"bm25", "hybrid", "hybrid_e5"}:
+            raise ValueError("Unknown retrieval strategy")
+        if strategy == "hybrid_e5" and self.encoder is None:
+            raise ValueError("hybrid_e5 requires an explicitly configured local encoder")
+        if not 1 <= top_k <= 5:
+            raise ValueError("top_k must be between 1 and 5")
         # Ordinary mechanics questions and empty/off-topic reports don't need fabricated policy.
         if analysis.category in {Category.question, Category.offtopic}:
             return []
-        expansion = EXPANSIONS.get(analysis.category.value, "")
-        query = analysis.text + " " + expansion
+        expansion = "" if strategy == "bm25" else EXPANSIONS.get(retrieval_topic(analysis), "")
+        query = without_identifiers(analysis.text) + " " + expansion
         lex = self.bm25.get_scores(tokenize(query))
         char = np.asarray((self.matrix @ self.vectorizer.transform([query]).T).toarray()).ravel()
         lex = lex / max(float(np.max(lex)), 1e-9)
-        combined = 0.50 * np.maximum(lex, 0) + 0.50 * char
-        if self.encoder is not None:
+        combined = np.maximum(lex, 0) if strategy == "bm25" else 0.50 * np.maximum(lex, 0) + 0.50 * char
+        if strategy == "hybrid_e5":
             query_vector = self.encoder.encode([query], "query: ")[0]
             dense = self.embeddings @ query_vector
             # Reciprocal rank fusion, with explicit lexical/anchor relevance gate retained.
@@ -178,9 +209,9 @@ class RuleIndex:
             for score in (combined, dense):
                 for rank, index in enumerate(np.argsort(-score)):
                     fusion[index] += 1.0 / (60 + rank + 1)
-            ordering = np.argsort(-fusion)
+            ordering = np.argsort(-fusion, kind="stable")
         else:
-            ordering = np.argsort(-combined)
+            ordering = np.argsort(-combined, kind="stable")
         result = []
         for idx in ordering:
             rule = self.rules[int(idx)]

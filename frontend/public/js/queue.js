@@ -8,16 +8,16 @@
   const STATUS = { pending: 'Новое', reviewed: 'Проверено', escalated: 'Эскалировано', simulated_sent: 'Симуляция' };
   const TABS = [['pending', 'Новые'], ['reviewed', 'Проверенные'], ['escalated', 'Эскалация'], ['simulated_sent', 'Симуляции'], ['', 'Все']];
   const KIND = { complaint: 'Жалоба', report: 'Репорт' };
-  const state = { status: 'pending', human: false, urgent: false, items: [], total: 0, selected: null,
-    editing: false, escalating: false, msg: null, error: null, loading: false, busy: false, history: [], draft: '', note: '', recovery: '' };
-  let demo = null, selectionRequest = 0, loadRequest = 0, inQueue = false, acceptedHash = location.hash;
+  const state = { status: 'pending', human: false, urgent: false, search: '', offset: 0, limit: 50, items: [], total: 0, selected: null,
+    editing: false, escalating: false, escalationReason:'', msg: null, error: null, loading: false, busy: false, history: [], draft: '', note: '', recovery: '', recoveryNote: '' };
+  let demo = null, selectionRequest = 0, loadRequest = 0, historyRequest = 0, inQueue = false, acceptedHash = location.hash;
   const live = () => UI.mode() === 'live';
   const api = UI.api;
-  const dirty = () => !!state.selected && ((state.editing && state.draft !== state.selected.draft) || (state.escalating && !!state.note.trim()));
+  const dirty = () => !!state.selected && ((state.editing && (state.draft !== state.selected.draft || state.note !== state.selected.note)) || (state.escalating && !!state.escalationReason.trim()));
   const ruleByCode = (code) => Object.assign({ code, synthetic: true }, UI.rules().get(code) || {});
   function fromApi(t) {
     return { id: t.id, kind: t.kind, created_at: t.created_at, status: t.status, revision: t.revision, text: t.text,
-      player: t.player_id, result: t.result, draft: t.draft_reply, note: t.reviewer_note || '',
+      player: t.player_id, result: t.result, draft: t.draft_reply, note: t.reviewer_note || '', normalizedText:t.normalized_text, diagnostics:t.diagnostics,
       citations: (t.citations || []).filter(c => c.ref !== 'section').map(c => ({ code: c.id || c.ref, id: c.id, ref: c.ref,
         title: c.title || '', text: c.text || '', section: c.section || '', synthetic: !!c.synthetic })) };
   }
@@ -36,9 +36,12 @@
     try {
       let items, total;
       if (live()) {
-        const q = new URLSearchParams({ limit: '100' }); if (state.status) q.set('status', state.status);
+        const q = new URLSearchParams({ limit: String(state.limit), offset: String(state.offset) }); if (state.status) q.set('status', state.status);
+        if (state.search) q.set('search', state.search);
+        if (state.human) q.set('needs_human', 'true');
+        if (state.urgent) q.set('urgent', 'true');
         const d = await api('/api/tickets?' + q); items = (d.items || []).map(fromApi); total = d.total ?? items.length;
-      } else { items = demoStore().filter(t => !state.status || t.status === state.status).slice().sort((a, b) => b.created_at.localeCompare(a.created_at)); total = items.length; }
+      } else { items = demoStore().filter(t => (!state.status || t.status === state.status) && (!state.human || t.result.needs_human) && (!state.urgent || ['p0','p1'].includes(t.result.priority)) && (!state.search || [t.text,t.id,t.player,t.draft].join(' ').toLocaleLowerCase().includes(state.search.toLocaleLowerCase()))).slice().sort((a, b) => b.created_at.localeCompare(a.created_at)); total = items.length; items = items.slice(state.offset,state.offset + state.limit); }
       if (request !== loadRequest) return;
       state.items = items; state.total = total;
     } catch (e) { if (request !== loadRequest) return; state.items = []; state.error = e.message; }
@@ -47,7 +50,7 @@
   const visible = () => state.items.filter(t => (!state.status || t.status === state.status) && (!state.human || t.result.needs_human) && (!state.urgent || ['p0', 'p1'].includes(t.result.priority)));
   async function select(id, force = false) {
     const request = ++selectionRequest;
-    state.editing = false; state.escalating = false; state.msg = null; state.history = []; state.recovery = '';
+    state.editing = false; state.escalating = false; state.msg = null; state.history = []; state.recovery = ''; state.recoveryNote = '';
     let t = force ? null : state.items.find(x => x.id === id) || (!live() ? demoStore().find(x => x.id === id) : null);
     if (!t && live()) {
       $('#q-detail').replaceChildren(h('p', { role: 'status', class: 'muted' }, 'Открываем обращение…'));
@@ -61,15 +64,16 @@
     if (t) loadHistory(t);
   }
   async function loadHistory(t) {
+    const request = ++historyRequest;
     if (!live()) { state.history = t.log || []; renderHistory(); return; }
     try {
       const d = await api('/api/tickets/' + encodeURIComponent(t.id) + '/feedback');
-      if (state.selected && state.selected.id === t.id) {
+      if (request === historyRequest && state.selected && state.selected.id === t.id) {
         state.history = (d.items || []).map(x => ({ created_at: x.created_at, status: x.status, changed: x.previous_draft !== x.edited_draft, reviewer_note: x.reviewer_note || '' }));
         // Never replace the editor or its focus when asynchronous feedback arrives.
         renderHistory();
       }
-    } catch (_) { if (state.selected && state.selected.id === t.id) { const box = $('#q-history'); if (box) replaceContent(box, h('p', { class: 'muted small' }, 'История сейчас недоступна. Черновик можно проверить и сохранить.')); } }
+    } catch (_) { if (request === historyRequest && state.selected && state.selected.id === t.id) { const box = $('#q-history'); if (box) replaceContent(box, h('p', { class: 'muted small' }, 'История сейчас недоступна. Черновик можно проверить и сохранить.')); } }
   }
   async function review(change, okText) {
     const t = state.selected; if (!t || state.busy) return;
@@ -86,16 +90,16 @@
         t.log = (t.log || []).concat([{ created_at: new Date().toISOString(), status: t.status, changed: before !== t.draft, reviewer_note: t.note }]); replace(t);
       }
       state.editing = false; state.escalating = false; state.draft = state.selected.draft; state.note = state.selected.note;
-      state.recovery = ''; state.msg = { text: okText }; loadHistory(state.selected);
+      state.recovery = ''; state.recoveryNote = ''; state.msg = { text: okText }; loadHistory(state.selected);
     } catch (e) {
       if (e.conflict) {
-        const unsaved = state.draft;
+        const unsaved = state.draft, unsavedNote = change.reviewer_note ?? state.note;
         try {
           await select(t.id, true);
-          state.recovery = unsaved;
+          state.recovery = unsaved; state.recoveryNote = unsavedNote;
           state.msg = { bad: true, text: 'Обращение изменили в другой вкладке. Загрузили свежую версию. Ваш вариант сохранён ниже для сравнения.' };
         } catch (refreshError) {
-          state.selected = t; state.draft = unsaved; state.editing = true;
+          state.selected = t; state.draft = unsaved; state.note = unsavedNote; state.editing = true;
           state.msg = { bad: true, text: 'Версия изменилась, но обновление сейчас недоступно. Ваш черновик сохранён в редакторе. ' + refreshError.message };
         }
       } else state.msg = { bad: true, text: e.message };
@@ -111,13 +115,16 @@
   function renderList() {
     const items = visible();
     const tabs = h('div', { class: 'tabs', role: 'group', 'aria-label': 'Статус' }, TABS.map(([value, label]) =>
-      h('button', { type: 'button', disabled: state.busy, 'aria-pressed': String(state.status === value), onclick: () => { state.status = value; load(); } }, label)));
-    const chip = (label, key) => h('button', { type: 'button', class: 'chip', 'aria-pressed': String(state[key]), onclick: () => { state[key] = !state[key]; renderList(); } }, label);
+      h('button', { type: 'button', disabled: state.busy, 'aria-pressed': String(state.status === value), onclick: () => { state.status = value; state.offset = 0; load(); } }, label)));
+    const chip = (label, key) => h('button', { type: 'button', class: 'chip', disabled: state.busy, 'aria-pressed': String(state[key]), onclick: () => { state[key] = !state[key]; state.offset = 0; load(); } }, label);
+    const search = h('input', { type: 'search', id: 'queue-search', maxlength: '200', placeholder: 'Текст, ID или ник игрока', disabled: state.busy }); search.value = state.search;
+    const searchForm = h('form', { class: 'queue-search', role: 'search', onsubmit: e => { e.preventDefault(); if (state.busy) return; state.search = search.value.trim(); state.offset = 0; load(); } }, h('label', { class: 'field', for: 'queue-search' }, h('span', null, 'Поиск по обращениям'), search), h('button', { type: 'submit', class: 'primary', disabled: state.busy }, 'Найти'));
     let body;
     if (state.loading) body = h('div', { role: 'status' }, h('div', { class: 'loading-line' }), h('p', { class: 'muted small' }, 'Загружаем очередь…'));
     else if (state.error) body = h('div', { class: 'queue-empty' }, h('p', { class: 'error', role: 'alert' }, state.error), h('button', { type: 'button', class: 'secondary', onclick: load }, 'Повторить'));
-    else if (!items.length) body = h('div', { class: 'queue-empty' }, h('h3', null, state.items.length ? 'Ничего под фильтрами' : 'Здесь пока тихо'),
-      h('p', null, state.items.length ? 'Измените фильтры, чтобы увидеть другие обращения.' : 'Новые обращения появятся после анализа. Проверенные остаются в своих разделах.'),
+    else if (!items.length) body = h('div', { class: 'queue-empty' }, h('h3', null, state.search || state.human || state.urgent ? 'Обращения не найдены' : 'В этом статусе нет обращений'),
+      h('p', null, state.search || state.human || state.urgent ? 'Измените запрос или сбросьте фильтры.' : 'Новые обращения появятся после анализа. Проверенные остаются в своих разделах.'),
+      state.search || state.human || state.urgent || state.offset ? h('button', {type:'button',class:'secondary',onclick:()=>{state.search='';state.human=false;state.urgent=false;state.offset=0;load();}}, 'Сбросить фильтры') : null,
       h('a', { href: '#', class: 'secondary' }, 'К анализу обращения'),
       live() && !state.items.length && state.status === 'pending' ? h('p', null, h('button', { class: 'link', type: 'button', disabled: state.busy, onclick: addSamples }, 'Добавить синтетические примеры')) : null);
     else body = h('div', null,
@@ -130,42 +137,50 @@
         h('span', { class: t.result.needs_human ? 'q-human' : 'muted small' }, t.result.needs_human ? 'Нужен человек' : 'Стандартная'),
         h('span', { class: 'q-status' }, STATUS[t.status]))))));
     replaceContent($('#q-list'), h('div', { class: 'queue-list-heading' }, h('h2', null, 'Обращения'), h('span', { class: 'count' }, state.loading ? '…' : items.length + ' в списке')),
-      tabs, h('div', { class: 'chips' }, chip('Нужен человек', 'human'), chip('Срочные P0–P1', 'urgent'),
+      tabs, searchForm, h('div', { class: 'chips' }, chip('Нужен человек', 'human'), chip('Срочные P0–P1', 'urgent'),
         h('button', { type: 'button', class: 'link refresh', disabled: state.loading || state.busy, onclick: load }, 'Обновить')),
-      live() && state.total > state.items.length ? h('p', { class: 'small muted' }, 'Загружено ' + state.items.length + ' из ' + state.total + '. Фильтры действуют на загруженные обращения.') : null, body);
+      body, state.total > state.limit || state.offset ? h('div', {class:'pagination', 'aria-label':'Страницы очереди'},
+        h('button',{type:'button',class:'secondary',disabled:state.loading||state.busy||state.offset===0,onclick:()=>{state.offset=Math.max(0,state.offset-state.limit);load();}},'Назад'),
+        h('span',null,(state.total ? state.offset+1 : 0)+'–'+Math.min(state.offset+state.items.length,state.total)+' из '+state.total),
+        h('button',{type:'button',class:'secondary',disabled:state.loading||state.busy||state.offset+state.limit>=state.total,onclick:()=>{state.offset+=state.limit;load();}},'Далее')) : null);
   }
   function renderDetail() {
     const t = state.selected, box = $('#q-detail');
     $('#view-queue').classList.toggle('has-selection', !!t);
     if (!t) { replaceContent(box); return; }
-    const r = t.result, sent = t.status === 'simulated_sent', norm = L.normalizeKk(t.text, r.lang);
+    const r = t.result, sent = t.status === 'simulated_sent', norm = typeof t.normalizedText === 'string' ? {text:t.normalizedText,changed:t.normalizedText!==t.text} : L.normalizeKk(t.text, r.lang);
     const rules = new Map(t.citations.map(c => [c.code, c]));
     t.citations.forEach(c => { if (c.ref && !rules.has(c.ref)) rules.set(c.ref, c); });
     UI.rules().forEach((v, k) => { if (!rules.has(k)) rules.set(k, v); });
-    const draft = h('textarea', { class: 'draft', rows: '6', maxlength: '5000', 'aria-label': 'Черновик ответа игроку', readonly: !state.editing, disabled: state.busy });
+    const draft = h('textarea', { class: 'draft', rows: '6', maxlength: '5000', 'aria-label': 'Черновик ответа игроку', readonly: sent || !state.editing, disabled: state.busy });
     draft.value = state.draft;
     const checks = h('ul', { class: 'checks' });
     const drawChecks = () => { const lint = L.lintDraft(draft.value, { lang: r.lang, rules, cited: [] });
       checks.replaceChildren(...lint.checks.map(c => h('li', { class: c.ok === false ? 'bad' : c.ok ? 'ok' : 'skip' }, h('b', null, c.ok === false ? '!' : c.ok ? '✓' : '–'), h('span', null, c.ok === false ? c.short || c.title : c.title)))); };
-    draft.addEventListener('input', () => { state.draft = draft.value; drawChecks(); }); drawChecks();
+    const draftState = h('p', { class: 'draft-state', role:'status' });
+    const drawState = () => { draftState.textContent = dirty() ? 'Есть несохранённые изменения' : state.editing ? 'Правки сохраняются кнопкой ниже' : 'Сохранённая версия ' + t.revision; draftState.classList.toggle('unsaved', dirty()); };
+    draft.addEventListener('input', () => { state.draft = draft.value; drawChecks(); drawState(); }); drawChecks(); drawState();
+    const noteInput = h('textarea', { id:'q-admin-note',rows:'2',maxlength:'3000',readonly:sent || !state.editing,disabled:state.busy,placeholder:'Комментарий для других администраторов' }); noteInput.value=state.note;
+    noteInput.addEventListener('input',()=>{state.note=noteInput.value;drawState();});
+    const noteEditor = h('label', { class:'field note-editor', for:'q-admin-note' }, h('span',null,'Заметка администратора'),noteInput);
     const needText = () => { if (state.draft.trim()) return true; state.msg = { bad: true, text: 'Черновик пустой.' }; renderMsg(); draft.focus(); return false; };
     const action = (label, cls, onclick) => h('button', { type: 'button', class: cls, disabled: state.busy, onclick }, label);
     let actions;
     if (sent) actions = h('p', { class: 'small muted' }, 'Симуляция зафиксирована. Реальное сообщение не отправлялось. Этот ответ больше не редактируется.');
     else if (state.escalating) {
-      const note = h('textarea', { rows: '3', id: 'q-note', maxlength: '3000', disabled: state.busy, placeholder: 'Что должен проверить старший администратор?' }); note.value = state.note;
-      note.addEventListener('input', () => { state.note = note.value; });
+      const note = h('textarea', { rows: '3', id: 'q-note', maxlength: String(Math.max(0,2998-state.note.length)), disabled: state.busy, placeholder: 'Что должен проверить старший администратор?' }); note.value = state.escalationReason;
+      note.addEventListener('input', () => { state.escalationReason = note.value; });
       actions = h('div', { class: 'escalate' }, h('label', { for: 'q-note' }, 'Почему нужен старший администратор'), note,
         h('div', { class: 'actions' }, action('Эскалировать', 'primary', () => {
-          if (!state.note.trim()) { state.msg = { bad: true, text: 'Напишите причину эскалации.' }; renderMsg(); note.focus(); return; }
-          if (needText()) review({ status: 'escalated', reviewer_note: state.note.trim(), draft_reply: state.draft }, 'Эскалация сохранена в очереди.');
-        }), action('Отмена', 'secondary', () => { state.escalating = false; state.note = t.note; renderDetail(); })));
+          if (!state.escalationReason.trim()) { state.msg = { bad: true, text: 'Напишите причину эскалации.' }; renderMsg(); note.focus(); return; }
+          if (needText()) review({ status: 'escalated', reviewer_note: [state.note.trim(),state.escalationReason.trim()].filter(Boolean).join('\n\n'), draft_reply: state.draft }, 'Эскалация и заметка сохранены в очереди.');
+        }), action('Отмена', 'secondary', () => { state.escalating = false; state.escalationReason=''; renderDetail(); })));
     } else actions = h('div', { class: 'actions' },
-      state.editing ? [action('Сохранить правку', 'primary', () => { if (needText()) review({ status: 'reviewed', draft_reply: state.draft }, 'Правка сохранена.'); }),
-        action('Отмена', 'secondary', () => { if (dirty() && !window.confirm('Отменить несохранённые изменения черновика?')) return; state.editing = false; state.draft = t.draft; renderDetail(); })]
+      state.editing ? [action('Сохранить правку', 'primary', () => { if (needText()) review({ status: 'reviewed', draft_reply: state.draft, reviewer_note: state.note }, 'Правка и заметка сохранены.'); }),
+        action('Отмена', 'secondary', () => { if (dirty() && !window.confirm('Отменить несохранённые изменения черновика и заметки?')) return; state.editing = false; state.draft = t.draft; state.note=t.note; renderDetail(); })]
         : action('Править', 'primary', () => { state.editing = true; state.msg = null; renderDetail(); $('#q-detail .draft').focus(); }),
-      action('Эскалировать', 'secondary', () => { state.escalating = true; state.note = ''; state.msg = null; renderDetail(); $('#q-note').focus(); }),
-      action('Симулировать отправку', 'secondary', () => { if (needText() && window.confirm('Зафиксировать симуляцию отправки? Сообщение НЕ будет отправлено игроку: интеграции с игрой нет. После подтверждения этот ответ нельзя редактировать.')) review({ status: 'simulated_sent', draft_reply: state.draft }, 'Симуляция сохранена. Ничего не отправлено в игру.'); }));
+      action('Эскалировать', 'secondary', () => { state.escalating = true; state.escalationReason=''; state.msg = null; renderDetail(); $('#q-note').focus(); }),
+      action('Симулировать отправку', 'secondary', () => { if (needText() && window.confirm('Зафиксировать симуляцию отправки? Сообщение НЕ будет отправлено игроку: интеграции с игрой нет. После подтверждения этот ответ нельзя редактировать.')) review({ status: 'simulated_sent', draft_reply: state.draft, reviewer_note: state.note }, 'Симуляция сохранена. Ничего не отправлено в игру.'); }));
     const section = (title, ...kids) => h('section', { class: 'block' }, h('h3', null, title), kids);
     const quote = h('blockquote', { class: 'quote', lang: r.lang === 'und' ? null : r.lang }, norm.text);
     let showRaw = false;
@@ -180,10 +195,11 @@
         t.note ? h('tr', null, h('th', null, 'Заметка'), h('td', null, t.note)) : null)),
       section('Текст игрока', quote, norm.changed ? h('button', { class: 'link', type: 'button', onclick: e => { showRaw = !showRaw; quote.textContent = showRaw ? t.text : norm.text; e.target.textContent = showRaw ? 'Показать нормализованный текст' : 'Показать оригинал'; } }, 'Показать оригинал') : null),
       section('Основание ответа', t.citations.length ? h('ul', { class: 'rules' }, t.citations.map(UI.ruleNode)) : h('p', { class: 'small muted' }, 'Подходящий пункт не найден или для этой категории правила не нужны.')),
-      section('Черновик ответа', draft, checks, actions, h('p', { class: 'msg', id: 'q-msg', role: 'status' }),
+      section('Черновик ответа',h('p',{class:'small generation-source'},'Исходный черновик: '+UI.generationLabel(t.diagnostics)), draft, draftState, checks, !state.escalating ? noteEditor : null, actions, h('p', { class: 'msg', id: 'q-msg', role: 'status' }),
         state.busy ? h('p', { role: 'status', class: 'small muted' }, 'Сохраняем решение…') : null,
         h('p', { class: 'small muted' }, 'Никакой автоматической отправки. Правки и решения сохраняются в истории обращения.'),
-        state.recovery ? h('details', { class: 'review-recovery' }, h('summary', null, 'Ваш несохранённый вариант'), h('textarea', { readonly: true, rows: '4', 'aria-label': 'Несохранённый вариант черновика' }, state.recovery)) : null),
+        state.recovery || state.recoveryNote ? h('details', { class: 'review-recovery', open:true }, h('summary', null, 'Ваш несохранённый вариант'), h('textarea', { readonly: true, rows: '4', 'aria-label': 'Несохранённый вариант черновика' }, state.recovery), state.recoveryNote ? h('textarea',{readonly:true,rows:'2','aria-label':'Несохранённая заметка'},state.recoveryNote) : null,
+          !sent ? action('Вернуть мой вариант в редактор','secondary',()=>{state.draft=state.recovery;state.note=state.recoveryNote;state.editing=true;state.escalating=false;state.recovery='';state.recoveryNote='';renderDetail();$('#q-detail .draft').focus();}) : h('p',{class:'small muted'},'Симуляция уже зафиксирована другим администратором. Ваш вариант доступен для копирования.')) : null),
       section('История решений', h('div', { id: 'q-history' })));
     const summary = box.querySelector('.summary');
     const blocks = [...box.querySelectorAll(':scope > .block')];
@@ -195,10 +211,12 @@
       (r.reasons || []).length ? h('ul', { class: 'reasons' }, r.reasons.map(x => h('li', null, x))) : null,
       t.note ? h('p', { class: 'small' }, 'Заметка: ' + t.note) : null);
     summary.remove();
-    box.querySelector('.meta-line').after(overview, textBlock, decision, draftBlock, rulesBlock);
+    const sourcePane=h('div',{class:'source-pane'},textBlock,rulesBlock);
+    const responsePane=h('div',{class:'response-pane'},draftBlock);
+    box.querySelector('.meta-line').after(overview,decision,h('div',{class:'case-body'},sourcePane,responsePane));
     draftBlock.classList.add('reply-block');
     const toolbar = draftBlock.querySelector('.actions');
-    if (toolbar && !state.escalating) { toolbar.classList.add('editor-toolbar'); draftBlock.querySelector('h3').after(toolbar); }
+    if (toolbar && !state.escalating) toolbar.classList.add('editor-toolbar');
     renderMsg(); renderHistory();
   }
   function renderHistory() { const box = $('#q-history'); if (!box) return;
@@ -235,5 +253,12 @@
     demoStore().push({ id, kind: input.kind, created_at: new Date().toISOString(), status: 'pending', revision: 1, text: input.text,
       player: input.player || null, result: JSON.parse(JSON.stringify(result)), draft: result.draft_reply.text, note: '', citations: citations.map(ruleByCode), log: [] }); return id; } };
   window.addEventListener('beforeunload', e => { if (dirty() || state.busy) { e.preventDefault(); e.returnValue = ''; } });
+  window.addEventListener('copilot:connected', async () => {
+    if (!inQueue) return;
+    await load();
+    // Reload/deep links may have failed before the in-memory token was entered.
+    // Reopen the current route only when there is no active human editor to disturb.
+    if (inQueue && !state.editing && !state.escalating && !state.busy) route();
+  });
   window.addEventListener('hashchange', route); route();
 })();

@@ -151,13 +151,26 @@ def test_anonymous_same_text_is_not_personal_duplicate(client):
 def test_static_root_does_not_serve_parent_files(tmp_path):
     root=tmp_path/'public'; root.mkdir(); (root/'index.html').write_text('<h1>synthetic index</h1>')
     (tmp_path/'private.sqlite').write_text('SYNTHETIC_PRIVATE_SENTINEL')
-    (root/'escape').symlink_to(tmp_path/'private.sqlite')
     cfg=Settings(mode='test',database_path=':memory:',api_token=TOKEN,enable_groq=False,frontend_dist=str(root))
     with TestClient(create_app(cfg),raise_server_exceptions=False) as c:
-        for path in ['/../private.sqlite','/%2e%2e/private.sqlite','/escape','/api/unknown']:
+        for path in ['/../private.sqlite','/%2e%2e/private.sqlite','/api/unknown']:
             response=c.get(path)
             assert 'SYNTHETIC_PRIVATE_SENTINEL' not in response.text
-            if path=='/escape': assert response.status_code==404
+
+
+def test_static_root_does_not_serve_symlink_target(tmp_path):
+    root=tmp_path/'public'; root.mkdir(); (root/'index.html').write_text('<h1>synthetic index</h1>')
+    (tmp_path/'private.sqlite').write_text('SYNTHETIC_PRIVATE_SENTINEL')
+    try:
+        (root/'escape').symlink_to(tmp_path/'private.sqlite')
+    except OSError as exc:
+        if getattr(exc, 'winerror', None)==1314:
+            pytest.skip('Windows account lacks the symbolic-link creation privilege; traversal checks run separately')
+        raise
+    cfg=Settings(mode='test',database_path=':memory:',api_token=TOKEN,enable_groq=False,frontend_dist=str(root))
+    with TestClient(create_app(cfg),raise_server_exceptions=False) as c:
+        response=c.get('/escape')
+        assert response.status_code==404 and 'SYNTHETIC_PRIVATE_SENTINEL' not in response.text
 
 
 def test_production_auth_required():

@@ -131,7 +131,7 @@ def test_weak_context_abstains(tmp_path):
       {"ref":"5.7","text":"Запрещено оскорбление в номерных знаках."},
       {"ref":"5.2","text":"Запрещено использование читов и багов для получения преимущества."}]},
       {"id":31,"category":"Synthetic format", "points":[{"ref":"1.2.7","text":"Текст жалобы содержит оскорбления."}]}]}
-    path = tmp_path / "rules.json"; path.write_text(json.dumps(data, ensure_ascii=False))
+    path = tmp_path / "rules.json"; path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     index = RuleIndex(str(path))
     assert index.retrieve(analyze(request("Игрок убил меня без причины", "complaint"))) == []
     insult = index.retrieve(analyze(request("Игрок оскорбил меня в чате", "complaint")))

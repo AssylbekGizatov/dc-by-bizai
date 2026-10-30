@@ -14,6 +14,21 @@ from .schemas import Category, Extracted, TriageRequest
 # Official handout cp1251 substitution table; preserve uppercase as well.
 KAZAKH_SUBSTITUTIONS = {"ќ": "қ", "ґ": "ғ", "ѕ": "ң", "є": "ә", "ј": "ө", "ў": "ұ", "ї": "ү"}
 TRANSLATION = str.maketrans(KAZAKH_SUBSTITUTIONS | {k.upper(): v.upper() for k, v in KAZAKH_SUBSTITUTIONS.items()})
+NICKNAME = re.compile(r"(?<![\w])([A-Za-zА-Яа-яЁё][A-Za-zА-Яа-яЁё0-9]{1,29}_[A-Za-zА-Яа-яЁё][A-Za-zА-Яа-яЁё0-9]{1,29})(?![\w])")
+UZBEK_CYRILLIC = re.compile(r"\b(?:салом|менга|менинг|илтимос|ёрдам|керак|тўлов\w*|ўйин\w*|ўзбек\w*|ўғир\w*|ҳақорат\w*|қил\w*|ҳисоб\w*|пул\w*|келмади|аккаунтим|қандай|қаер\w*|учун|рахмат)\b", re.I)
+
+
+def without_identifiers(text: str) -> str:
+    """Nicknames, URLs and redaction tokens are not linguistic/intent evidence."""
+    text = NICKNAME.sub(" ", text)
+    return re.sub(r"https?://\S+|<[^>]{1,40}>|\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b", " ", text)
+
+
+def uzbek_search_form(text: str) -> str:
+    """Script folding for matching only; the displayed normalized text is preserved."""
+    source = "абвгдеёжзийклмнопрстуфхцчшъэюяўқғҳ"
+    target = ["a", "b", "v", "g", "d", "e", "yo", "j", "z", "i", "y", "k", "l", "m", "n", "o", "p", "r", "s", "t", "u", "f", "x", "ts", "ch", "sh", "'", "e", "yu", "ya", "o'", "q", "g'", "h"]
+    return text.casefold().translate(str.maketrans(dict(zip(source, target))))
 
 
 def normalize(text: str) -> tuple[str, list[str]]:
@@ -21,11 +36,22 @@ def normalize(text: str) -> tuple[str, list[str]]:
     current = unicodedata.normalize("NFKC", text)
     if current != text:
         changes.append("unicode_nfkc")
-    translated = current.translate(TRANSLATION)
+    # Ў is also a real Uzbek letter. The handout's Kazakh legacy mapping must
+    # not corrupt an Uzbek Cyrillic sentence. Distinctive legacy letters still
+    # identify the Kazakh table when it is presented on its own.
+    uzbek = bool(UZBEK_CYRILLIC.search(current)) or (
+        "ў" in current.casefold() and not re.search(r"[ќґѕєјїәңөұүі]", current.casefold()))
+    translation = TRANSLATION
+    if uzbek:
+        translation = {k: v for k, v in TRANSLATION.items() if chr(k) not in "ўЎ"}
+    translated = current.translate(translation)
     if translated != current:
         changes.append("kazakh_cp1251_restored")
-    current = re.sub(r"[\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]", "", translated)
-    if current != translated:
+    apostrophized = re.sub(r"([oOgG])[‘’ʻʼ`´]", r"\1'", translated)
+    if apostrophized != translated:
+        changes.append("uzbek_apostrophe_normalized")
+    current = re.sub(r"[\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]", "", apostrophized)
+    if current != apostrophized:
         changes.append("invisible_controls_removed")
     clean = re.sub(r"\s+", " ", current).strip()
     if clean != current:
@@ -44,15 +70,19 @@ LANG_WORDS = {
 
 
 def words(text: str) -> list[str]:
-    return re.findall(r"[^\W\d_]+", text.casefold(), flags=re.UNICODE)
+    return re.findall(r"[^\W\d_]+(?:'[^\W\d_]+)*", text.casefold(), flags=re.UNICODE)
 
 
 def detect_language(text: str, hint: str | None = None) -> tuple[str, float, bool]:
-    tokens = set(words(text))
+    text = without_identifiers(text)
+    tokens = {token.replace("'", "") for token in words(text)}
     scores = {lang: float(len(tokens & vocab)) for lang, vocab in LANG_WORDS.items()}
-    if re.search(r"[әғқңөұүһі]", text.casefold()):
+    uz_cyrillic = len(UZBEK_CYRILLIC.findall(text))
+    if re.search(r"[әғқңөұүһі]", text.casefold()) and not uz_cyrillic and not re.search(r"[ўҳ]", text.casefold()):
         scores["kk"] += 3.5
-    if re.search(r"[ўқғҳ]", text.casefold()) or re.search(r"(?:o|g)['‘’ʻ]", text.casefold()):
+    if uz_cyrillic:
+        scores["uz"] += min(5, uz_cyrillic)
+    if re.search(r"[ўҳ]", text.casefold()) or re.search(r"(?:o|g)['‘’ʻ]", text.casefold()):
         scores["uz"] += 2.0
     ranked = sorted(scores, key=lambda l: scores[l], reverse=True)
     best, runner = ranked[:2]
@@ -63,6 +93,7 @@ def detect_language(text: str, hint: str | None = None) -> tuple[str, float, boo
     # A hint breaks a genuine lexical tie, never overrides observed text.
     if hint in scores and scores[hint] == scores[best]:
         best = hint
+    runner = next(lang for lang in ranked if lang != best)
     mixed = scores[runner] >= 2 and scores[runner] >= scores[best] * 0.55
     confidence = min(0.9, 0.5 + 0.08 * scores[best])
     return best, confidence, mixed
@@ -84,8 +115,30 @@ PATTERNS = {
     "help": r"застр[яе]|текстур|вылет|баг|лага|телепорт|ошибк|қатып|тұрып\s+қал|stuck|bug|crash|error|lag|qotib|atrapad|travou",
     "question": r"\bкак\b|\bгде\b|почему|сколько|правил|қалай|қайда|неге|qanday|qayer|nima|\bhow\b|\bwhere\b|\bwhy\b|\bcomo\b|\bdonde\b|\bonde\b|лицензи|работ|купить|buy|comprar",
 }
+# Hand-written domain signals, not learned labels. Uzbek Cyrillic uses the same
+# expressions after script folding; no external API is involved in extraction.
+EXTRA_PATTERNS = {
+    "payment": r"to'lov|to'ladim|pul.{0,20}(?:qaytar|tushma|yechil)|donat|ақшам.{0,20}(?:түсп|келм|қайтар)|төлед|донат(?:ил|нул)",
+    "hack": r"akkaunt\w*.{0,25}(?:buz|o'g'ir|kir[ao]?\s+olma)|hisob\w*.{0,25}(?:buz|o'g'ir)|parol\w*.{0,20}(?:o'zgar|almashtir)|құпиясөз\w*.{0,25}өзгер|(?:аккаунт|тіркелгі)\w*.{0,25}(?:бұз|ұрла|кіре\s+алма)|менің\s+орныма\s+кір|доступ\w*.{0,20}(?:потер|укра)|акк\w*.{0,15}взлом",
+    "account": r"(?:mashina|uy|mulk|pul|akkaunt)\w*.{0,20}yo'qol|тіркелгі",
+    "ban": r"(?:ban(?:ni|dan|ga|im)?|бaн)\s+(?:oldim|olib|olgan|och|yech)|blok(?:dan|landi|lash)|тақиқ|бұғат|бан\s+алдым|баннан\s+шығар|блоктан\s+шығар|апеляц|разблокир|(?:выдал\w*|получил\w*|дали)\s+(?:мне\s+)?бан|сним\w*.{0,20}(?:бан|блок|огранич)",
+    "scam": r"aldad|aldab|firibgar|алданд|ұрлап\s+кет",
+    "insult": r"haqorat|so'k|сөк|балағат|оскарб|аскорб",
+    "dm": r"o'ldir|sababsiz\s+(?:ur|ot)|себепсіз.{0,15}(?:өлтір|ат)",
+    "help": r"qotib|tiqilib|chiqa\s+olma|тұрып\s+қал|қатып\s+қал",
+    "question": r"qoida|ереже|qayer|nechta|qancha",
+    "threat": r"hayot\w*.{0,20}tahdid|o'ldiraman.{0,20}(?:hayot|haqiqiy)|өмірде.{0,20}өлтір",
+}
+for _topic, _pattern in EXTRA_PATTERNS.items():
+    PATTERNS[_topic] += "|" + _pattern
 COMPILED = {k: re.compile(v, re.IGNORECASE) for k, v in PATTERNS.items()}
-INJECTION = re.compile(r"ignore.{0,40}(?:instructions|rules|previous)|(?:игнорируй|забудь).{0,40}(?:инструкц|правил)|system\s*(?:prompt|message|:)|developer\s*:|<\|(?:system|assistant)|\[INST\]|выведи.{0,30}(?:секрет|ключ|api)|reveal.{0,30}(?:secret|prompt|key)|needs_human\s*[:=]\s*false|системн\w*\s+(?:промпт|инструкц)", re.IGNORECASE)
+INJECTION = re.compile(
+    r"ignore.{0,40}(?:instructions|rules|previous)|(?:игнорируй|забудь).{0,40}(?:инструкц|правил)|"
+    r"system\s*(?:prompt|message|:)|developer\s*:|<\|(?:system|assistant)|\[INST\]|"
+    r"выведи.{0,30}(?:секрет|ключ|api)|reveal.{0,30}(?:secret|prompt|key)|needs_human\s*[:=]\s*false|"
+    r"системн\w*\s+(?:промпт|инструкц)|(?:нұсқау|ережелер|алдыңғы).{0,40}(?:елеме|ұмыт)|"
+    r"(?:құпия|api).{0,20}(?:кілт|көрсет)|(?:oldingi|avvalgi|barcha).{0,30}(?:ko'rsatma|qoida).{0,30}(?:unut|e'tiborsiz)|"
+    r"(?:maxfiy|api).{0,20}(?:kalit|chiqar)|(?:инструкция|қоида).{0,30}(?:унут|эътиборсиз)", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -110,7 +163,10 @@ def analyze(request: TriageRequest) -> Analysis:
     raw = "\n".join(m.text for m in request.messages if m.role == "player")
     text, changes = normalize(raw)
     lang, lang_confidence, mixed = detect_language(text, request.server_lang)
-    hit = {key: bool(regex.search(text)) for key, regex in COMPILED.items()}
+    signal_text = without_identifiers(text)
+    if lang == "uz" or UZBEK_CYRILLIC.search(signal_text):
+        signal_text += " " + uzbek_search_form(signal_text)
+    hit = {key: bool(regex.search(signal_text)) for key, regex in COMPILED.items()}
     evidence = max(request.images_count, sum(m.attachments for m in request.messages if m.role == "player"))
     sensitive = [key for key in ("payment", "hack", "ban", "threat", "mass_bug") if hit[key]]
     if request.kind == "complaint":
@@ -142,26 +198,30 @@ def analyze(request: TriageRequest) -> Analysis:
         priority = "p0"
     elif any(hit[k] for k in ("cheat", "scam", "rmt_ads")) or (request.kind == "complaint" and evidence > 0):
         priority = "p1"
+    elif category == Category.question and re.search(r"правил|ереже|qoida|\brules?\b|regla|regra", signal_text, re.I):
+        priority = "p2"  # Taxonomy separates policy questions from game mechanics.
     elif category in {Category.question, Category.offtopic, Category.invalid} or (request.kind == "complaint" and not evidence):
         priority = "p3"
     else:
         priority = "p2"
     nickname = request.reported_nick
     if not nickname:
-        found = re.search(r"(?<![\w])([A-Za-zА-Яа-яЁё][A-Za-zА-Яа-яЁё0-9]{1,29}_[A-Za-zА-Яа-яЁё][A-Za-zА-Яа-яЁё0-9]{1,29})(?![\w])", text)
+        found = NICKNAME.search(text)
         nickname = found.group(1) if found else None
     refs_text = (request.rule_refs_raw or "") + " " + text
-    refs = list(dict.fromkeys(re.findall(r"(?<![\w.])(?:ЖБ\s+|ОП\s+|GZ\s+)?\d{1,2}\.\d{1,2}(?:\.\d{1,2})?(?![\w.])", refs_text, re.I)))[:20]
+    refs = list(dict.fromkeys(re.findall(r"(?<![\w.])(?:ЖБ\s+|ОП\s+|GZ\s+)?\d{1,2}\.\d{1,2}(?:\.\d{1,2})?(?!\w|\.\d)", refs_text, re.I)))[:20]
     server = request.server
     if not server:
-        found = re.search(r"(?:сервер(?:е|і)?|server|серверде)\s*[№#:]?\s*(\d{1,3})\b", text, re.I)
+        found = re.search(r"(?:сервер(?:е|і|де)?|server(?:da)?)\s*[№#:]?\s*(\d{1,3})\b", text, re.I)
+        if not found:
+            found = re.search(r"(?<![\w.])(\d{1,3})\s*(?:-?(?:й|м|ом|ші|шы))?[-\s]*(?:сервер(?:е|і|де)?|server(?:da)?)\b", text, re.I)
         server = found.group(1) if found else None
     tokens = words(text)
     repeated = len(tokens) >= 12 and len(set(tokens)) <= max(2, len(tokens) // 6)
     spam = bool(repeated or re.search(r"(.)\1{19,}", text) or len(re.findall(r"https?://", text)) >= 4)
     return Analysis(text, changes, lang, lang_confidence, mixed, category, priority, min(confidence, lang_confidence),
                     Extracted(nickname=nickname, rule_refs=refs, has_evidence=evidence > 0, server=server),
-                    list(dict.fromkeys(sensitive)), bool(INJECTION.search(text)), spam,
+                    list(dict.fromkeys(sensitive)), bool(INJECTION.search(signal_text)), spam,
                     sum(m.role == "admin" for m in request.messages), evidence)
 
 
@@ -169,6 +229,7 @@ def redact_for_external(text: str) -> str:
     """No ticket identifiers, emails, phones, credentials or long number strings leave here."""
     text = re.sub(r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b", "[EMAIL]", text)
     text = re.sub(r"(?:\+?\d[\s()\-]*){7,}", "[NUMBER]", text)
-    text = re.sub(r"(?i)(?:password|пароль|token|api[_ -]?key|секрет)\s*[:=]\s*\S+", "[SECRET]", text)
+    text = re.sub(r"(?i)(?:password|пароль|құпиясөз|parol|парол|token|api[_ -]?key|секрет)\s*[:=]\s*\S+", "[SECRET]", text)
     text = re.sub(r"\b(?:gsk_|sk-)[A-Za-z0-9_-]{12,}\b", "[SECRET]", text)
+    text = NICKNAME.sub("[NICKNAME]", text)
     return text
