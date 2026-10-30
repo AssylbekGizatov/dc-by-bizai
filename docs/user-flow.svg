@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1570" viewBox="0 0 1440 1570">
+<defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#53657d"/></marker></defs>
+<rect width="1440" height="1570" fill="#f5f7fb"/>
+<text x="52" y="62" font-family="DejaVu Sans, sans-serif" font-size="32" font-weight="700" fill="#172b4d">GRAND MOBILE / SUPPORT COPILOT</text>
+<text x="52" y="100" font-family="DejaVu Sans, sans-serif" font-size="19" font-weight="400" fill="#53657d">User flow · Challenge 03 · проектируемый MVP, не готовая реализация</text>
+<rect x="40" y="135" width="420" height="1315" rx="18" fill="white" stroke="#dbe3ef"/>
+<path d="M58,135 H442 Q460,135 460,153 V230 H40 V153 Q40,135 58,135" fill="#102c50"/>
+<text x="64" y="177" font-family="DejaVu Sans, sans-serif" font-size="22" font-weight="700" fill="#ffffff">01  ИГРОК</text>
+<text x="64" y="209" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#b9cee5">Обращение и уточнения</text>
+<rect x="510" y="135" width="420" height="1315" rx="18" fill="white" stroke="#dbe3ef"/>
+<path d="M528,135 H912 Q930,135 930,153 V230 H510 V153 Q510,135 528,135" fill="#102c50"/>
+<text x="534" y="177" font-family="DejaVu Sans, sans-serif" font-size="22" font-weight="700" fill="#ffffff">02  СЕРВИС</text>
+<text x="534" y="209" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#b9cee5">Triage + RAG + проверки</text>
+<rect x="980" y="135" width="420" height="1315" rx="18" fill="white" stroke="#dbe3ef"/>
+<path d="M998,135 H1382 Q1400,135 1400,153 V230 H980 V153 Q980,135 998,135" fill="#102c50"/>
+<text x="1004" y="177" font-family="DejaVu Sans, sans-serif" font-size="22" font-weight="700" fill="#ffffff">03  АДМИНИСТРАТОР</text>
+<text x="1004" y="209" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="400" fill="#b9cee5">Решение и отправка</text>
+<rect x="60" y="270" width="380" height="108" rx="12" fill="#ecf4ff" stroke="#b4c8e2"/>
+<text x="78" y="299" font-family="DejaVu Sans, sans-serif" font-size="20" font-weight="700" fill="#172b4d">Создать обращение</text>
+<text x="78" y="326" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="400" fill="#172b4d">Жалоба из лаунчера / report из игры</text>
+<text x="78" y="350" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="400" fill="#172b4d">Текст, ник, сервер, ссылки на правила</text>
+<rect x="530" y="270" width="380" height="108" rx="12" fill="#ecf4ff" stroke="#b4c8e2"/>
+<text x="548" y="299" font-family="DejaVu Sans, sans-serif" font-size="20" font-weight="700" fill="#172b4d">Принять и нормализовать</text>
+<text x="548" y="326" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="400" fill="#172b4d">POST /triage · complaint / report</text>
+<text x="548" y="350" font-family="DejaVu Sans, sans-serif" font-size="15" font-weight="400" fill="#172b4d">cp1251-подмены; язык; смешанный текст</text>
+<polyline points="440,324 530,324" fill="none" stroke="#53657d" stroke-width="2.5" marker-end="url(#arrow)"/>
+<rect x="530" y="420" width="380" height="108" rx="12" fill="#ecf4ff" stroke="#b4c8e2"/>
+<text x="548" y="449" font-family="DejaVu Sans, sans-serif" font-size="20" font-weight="700" fill="#172b4d">Разобрать обращение</text>
+<text x="548" y="476" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="400" fill="#172b4d">Категория, приоритет, спам / дубликат</text>
+<text x="548" y="500" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="400" fill="#172b4d">Ник, сервер, заявленные rule_refs</text>
+<polyline points="720,378 720,420" fill="none" stroke="#53657d" stroke-width="2.5" marker-end="url(#arrow)"/>
+<rect x="60" y="450" width="380" height="108" rx="12" fill="#fff5df" stroke="#b4c8e2"/>
+<text x="78" y="479" font-family="DejaVu Sans, sans-serif" font-size="20" font-weight="700" fill="#172b4d">Не считать текст фактом</text>
+<text x="78" y="506" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="400" fill="#172b4d">В выгрузке нет самих скриншотов.</text>
+<text x="78" y="530" font-family="DejaVu Sans, sans-serif" font-size="15" font-weight="400" fill="#172b4d">images_count ≠ проверка доказательств</text>
+<rect x="530" y="570" width="380" height="108" rx="12" fill="#ecf4ff" stroke="#b4c8e2"/>
+<text x="548" y="599" font-family="DejaVu Sans, sans-serif" font-size="20" font-weight="700" fill="#172b4d">Найти релевантные правила</text>
+<text x="548" y="626" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="400" fill="#172b4d">RAG: правила + база знаний</text>
+<text x="548" y="650" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="400" fill="#172b4d">Проверить ID и применимость цитат</text>
+<polyline points="720,528 720,570" fill="none" stroke="#53657d" stroke-width="2.5" marker-end="url(#arrow)"/>
+<rect x="530" y="720" width="380" height="108" rx="12" fill="#ecf4ff" stroke="#b4c8e2"/>
+<text x="548" y="749" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="700" fill="#172b4d">Подготовить безопасный черновик</text>
+<text x="548" y="776" font-family="DejaVu Sans, sans-serif" font-size="15" font-weight="400" fill="#172b4d">На языке игрока; без выдуманных правил</text>
+<text x="548" y="800" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="400" fill="#172b4d">Не обещать бан, разбан или возврат</text>
+<polyline points="720,678 720,720" fill="none" stroke="#53657d" stroke-width="2.5" marker-end="url(#arrow)"/>
+<rect x="530" y="870" width="380" height="132" rx="12" fill="#fff5df" stroke="#b4c8e2"/>
+<text x="548" y="899" font-family="DejaVu Sans, sans-serif" font-size="19" font-weight="700" fill="#172b4d">Проверить риск и уверенность</text>
+<text x="548" y="926" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="400" fill="#172b4d">Платёж / апелляция / взлом → человек</text>
+<text x="548" y="950" font-family="DejaVu Sans, sans-serif" font-size="14" font-weight="400" fill="#172b4d">Нет доказательств / уверенности → человек</text>
+<text x="548" y="980" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="400" fill="#785813">needs_human, confidence, reasons</text>
+<polyline points="720,828 720,870" fill="none" stroke="#53657d" stroke-width="2.5" marker-end="url(#arrow)"/>
+<rect x="1000" y="870" width="380" height="132" rx="12" fill="#fff5df" stroke="#b4c8e2"/>
+<text x="1018" y="899" font-family="DejaVu Sans, sans-serif" font-size="19" font-weight="700" fill="#172b4d">Очередь проверки человеком</text>
+<text x="1018" y="926" font-family="DejaVu Sans, sans-serif" font-size="15" font-weight="400" fill="#172b4d">Рисковый кейс → профильный специалист</text>
+<text x="1018" y="950" font-family="DejaVu Sans, sans-serif" font-size="15" font-weight="400" fill="#172b4d">Источники, причины, контекст и черновик</text>
+<polyline points="910,925 1000,925" fill="none" stroke="#53657d" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="931" y="912" font-family="DejaVu Sans, sans-serif" font-size="14" font-weight="400" fill="#53657d">риск</text>
+<rect x="530" y="1060" width="380" height="108" rx="12" fill="#ecf4ff" stroke="#b4c8e2"/>
+<text x="548" y="1089" font-family="DejaVu Sans, sans-serif" font-size="20" font-weight="700" fill="#172b4d">Вернуть результат triage</text>
+<text x="548" y="1116" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="400" fill="#172b4d">Структурированный JSON + черновик</text>
+<text x="548" y="1140" font-family="DejaVu Sans, sans-serif" font-size="14" font-weight="400" fill="#172b4d">MVP: даже обычный ответ проверяет человек</text>
+<polyline points="720,1002 720,1060" fill="none" stroke="#53657d" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="736" y="1035" font-family="DejaVu Sans, sans-serif" font-size="14" font-weight="400" fill="#53657d">обычный кейс</text>
+<rect x="1000" y="1060" width="380" height="108" rx="12" fill="#ecf4ff" stroke="#b4c8e2"/>
+<text x="1018" y="1089" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="700" fill="#172b4d">Проверить / править / эскалировать</text>
+<text x="1018" y="1116" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="400" fill="#172b4d">Подтвердить текст перед отправкой</text>
+<text x="1018" y="1140" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="400" fill="#172b4d">Решения о санкциях — только человеку</text>
+<polyline points="1190,1002 1190,1060" fill="none" stroke="#53657d" stroke-width="2.5" marker-end="url(#arrow)"/>
+<polyline points="910,1115 1000,1115" fill="none" stroke="#53657d" stroke-width="2.5" marker-end="url(#arrow)"/>
+<rect x="1000" y="1230" width="380" height="108" rx="12" fill="#ecf4ff" stroke="#b4c8e2"/>
+<text x="1018" y="1259" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="700" fill="#172b4d">Отправить ответ и сохранить правки</text>
+<text x="1018" y="1286" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="400" fill="#172b4d">MVP: симуляция, без API игры</text>
+<text x="1018" y="1310" font-family="DejaVu Sans, sans-serif" font-size="14" font-weight="400" fill="#172b4d">Правки → обратная связь, журнал решения</text>
+<polyline points="1190,1168 1190,1230" fill="none" stroke="#53657d" stroke-width="2.5" marker-end="url(#arrow)"/>
+<rect x="60" y="1230" width="380" height="108" rx="12" fill="#ecf4ff" stroke="#b4c8e2"/>
+<text x="78" y="1259" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="700" fill="#172b4d">Получить ответ / уточнить данные</text>
+<text x="78" y="1286" font-family="DejaVu Sans, sans-serif" font-size="14" font-weight="400" fill="#172b4d">Получить инструкцию или запрос уточнений</text>
+<text x="78" y="1310" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="400" fill="#172b4d">Новый текст → повторный triage</text>
+<polyline points="1000,1283 440,1283" fill="none" stroke="#53657d" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="631" y="1267" font-family="DejaVu Sans, sans-serif" font-size="14" font-weight="400" fill="#53657d">после подтверждения</text>
+<text x="55" y="1491" font-family="DejaVu Sans, sans-serif" font-size="17" font-weight="700" fill="#102c50">ГРАНИЦА MVP</text>
+<text x="55" y="1522" font-family="DejaVu Sans, sans-serif" font-size="18" font-weight="400" fill="#172b4d">Сервис выдаёт рекомендацию; автоматических наказаний и отправки без проверки нет.</text>
+<text x="55" y="1551" font-family="DejaVu Sans, sans-serif" font-size="16" font-weight="400" fill="#53657d">Автоответы для безопасных категорий — следующий этап после валидации. UI администратора — опциональный бонус.</text>
+</svg>
