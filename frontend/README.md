@@ -1,31 +1,57 @@
-# Support Copilot — admin UI
+# Support Copilot: страница анализа обращений
 
-Russian-first React + TypeScript workspace with bundled Lucide icons and no external fonts or frontend model credentials.
+Одна страница для проверки системы: вставить обращение игрока и увидеть, как сервис его разобрал. Без входа и регистрации, без дашбордов.
 
-## Run and verify
+Обычный HTML, CSS и JavaScript без фреймворка. Vite нужен только для dev-сервера с прокси и для сборки в `dist/`.
 
-Node >= 22.12 is required. From this directory:
+## Запуск
+
+Node >= 22.12. Из этой папки:
 
 ```sh
 npm ci
-npm run dev       # http://127.0.0.1:5173, proxies /api to localhost:8000
-npm run build     # typecheck + production output in dist/
-npm test          # 20 API, rendering, and safety-flow tests
+npm run dev       # http://127.0.0.1:5173, /api и /triage проксируются на 127.0.0.1:8000
+npm test          # тесты логики страницы (vitest)
+npm run build     # typecheck + сборка в dist/
 ```
 
-For both services, run `npm run dev` or `make dev` from the repository root after its setup. Production uses the FastAPI same-origin static host; the browser only calls `/api/*`. The dev proxy preserves the browser Host for the API's same-origin policy. Never enable unrestricted Vite `allowedHosts`.
+Вместе с API: `make dev` из корня репозитория. В продакшене FastAPI отдаёт `dist/` с того же адреса (`make build && make serve`, Docker).
 
-## Included behavior
+## Режимы
 
-- Server-side text/ID, status, language, category, and priority filters; 100-record pagination; explicitly page-scoped counters.
-- Ticket details, original/normalized text, unverified extracted claims, model confidence clearly distinguished from measured accuracy.
-- RAG source browser with canonical unique rule ID, section, full text, and explicit synthetic-rule markings.
-- Editable draft, optimistic revision checks, preserved human feedback, escalation reason, and confirmed **simulated** send. There is no game-send integration.
-- Synthetic examples only; zero real tickets or dataset-derived examples in the frontend.
-- Request cancellation for navigation, unsaved-change guards, protected repeated creation, retained idempotency key on retry, loading/empty/error states.
-- Native modal focus trapping, Escape/cancel, labelled controls, keyboard text tabs, reduced-motion handling, narrow-screen layout.
-- Optional admin API token stays in tab memory; never localStorage. Provider keys never belong in the browser.
+- **С API.** Если `GET /api/health` отвечает, страница отправляет обращение в `POST /triage` (контракт из ТЗ) и берёт тексты правил из `GET /api/rules`. Вход не нужен, поэтому для демо сервис запускается без `API_TOKEN`. Если токен задан, страница покажет ошибку 401.
+- **Демо.** Если API не запущен или открыт адрес с `?demo=1`, анализ идёт в браузере по ключевым словам и демо-формулировкам правил.
 
-## Verified locally
+## Что показывает
 
-Production build, TypeScript, and 20 tests pass. CUA browser QA against the actual Python API verified synthetic creation, parsed details, canonical citation view, editing/saving, required-note escalation, cancel/reopen, and explicit-confirmation simulated send. API-offline errors and desktop layout were also inspected. Unit tests use synthetic fixtures only and do not replace the application's API.
+- **Сводка:** язык, категория, приоритет, спам или повтор, нужен ли человек и почему, уверенность.
+- **Текст игрока:** казахские замены cp1251 (ќ → қ и т. п.) по умолчанию исправлены, исходный вариант доступен по ссылке.
+- **Что извлечено:** ник, пункт правил, доказательства, сервер, и откуда взято каждое значение.
+- **Найденные правила (RAG):** какие пункты нашлись и их текст. Если игрок указал несуществующий пункт, страница об этом скажет.
+- **Черновик ответа** с проверкой: пункты существуют, нет обещаний разбана, возврата или наказания, нет выводов по скриншотам, язык совпадает с языком игрока.
+- **JSON:** ответ API как есть.
+
+## Повторы и флуд: 1 игрок, 1 проблема, 5 обращений за час
+
+Если указать ID игрока, страница передаёт его в `/triage` как `reporter_hash` вместе с `created_at`.
+
+- **Повтор:** та же проблема от того же игрока за час. С API это определяет сервис. В демо-режиме это делает страница: ссылка на первое обращение, низкий приоритет, короткий ответ «уже передано администратору».
+- **Флуд:** пятое и последующие обращения игрока за час. Пока считается на странице по истории вкладки.
+
+Обращения не отклоняются, только помечаются. Платежи, взлом и жалобы на админов всё равно идут человеку.
+
+## Файлы
+
+| Файл | Что внутри |
+|---|---|
+| `index.html` | Разметка страницы |
+| `public/analyzer.css` | Стили |
+| `public/js/analyzer.js` | Отправка обращения, вывод результата, повторы и флуд |
+| `public/js/logic.js` | Исправление cp1251, язык, источники фактов, проверка черновика, демо-анализ |
+| `public/js/demo-data.js` | Демо-формулировки правил и примеры (выдуманные, не из датасета) |
+| `public/assets/logo.svg` | Значок страницы |
+| `src/logic.test.ts` | Тесты логики |
+
+Скрипты в `public/` подключаются как обычные `<script>` и попадают в `dist/` без изменений. Внешних шрифтов и скриптов нет: CSP сервиса разрешает только свой адрес.
+
+Данных хакатона в папке нет: по условиям кейса их нельзя публиковать.
