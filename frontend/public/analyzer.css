@@ -99,3 +99,41 @@ input[type=text] { width: 100%; border: 1px solid var(--line-2); border-radius: 
 .history .num { color: var(--ink-3); font-size: 13px; }
 .history .txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .history .flag { font-size: 12px; color: var(--warn); background: var(--warn-bg); padding: 1px 7px; border-radius: 10px; }
+
+/* ---------- разделы и очередь админа ---------- */
+[hidden] { display: none !important; }
+.nav { display: flex; gap: 4px; margin-left: 20px; }
+.nav a { color: var(--ink-2); text-decoration: none; font-size: 14px; font-weight: 500; padding: 6px 12px; border-radius: 8px; }
+.nav a:hover { background: var(--bg); color: var(--ink); }
+.nav a[aria-current="true"] { color: var(--ink); background: var(--bg); box-shadow: inset 0 -2px 0 var(--brand-line); }
+@media (max-width: 640px) { .top-in { flex-wrap: wrap; height: auto; padding-top: 10px; padding-bottom: 8px; row-gap: 6px; } .nav { order: 3; margin-left: 0; width: 100%; } }
+
+.tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px; }
+.tabs button { border: 1px solid var(--line-2); background: var(--surface); border-radius: 8px; padding: 4px 10px; font-size: 13px; cursor: pointer; }
+.tabs button[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: #fff; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.chip { border: 1px solid var(--line-2); background: var(--surface); border-radius: 14px; padding: 3px 11px; font-size: 13px; cursor: pointer; }
+.chip[aria-pressed="true"] { background: #FFF6A8; border-color: var(--brand-line); font-weight: 600; }
+.refresh { margin: 0 0 0 auto; font-size: 13px; }
+.count { margin: 10px 0 6px; }
+.qlist { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.qlist button { width: 100%; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; column-gap: 10px; row-gap: 2px; align-items: center; text-align: left; border: 0; background: none; padding: 8px; border-radius: 6px; cursor: pointer; font-size: 14px; }
+.qlist button:hover, .qlist button[aria-current="true"] { background: var(--bg); }
+.qlist button[aria-current="true"] { box-shadow: inset 3px 0 0 var(--brand-line); }
+.qlist .txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qlist .meta { color: var(--ink-3); font-size: 12px; white-space: nowrap; }
+.qlist .flag { font-size: 12px; color: var(--ink-2); background: var(--bg); border: 1px solid var(--line); padding: 0 6px; border-radius: 10px; }
+.qlist .st { grid-column: 2 / 4; font-size: 12px; color: var(--ink-3); }
+.meta-line { margin: -10px 0 14px; }
+
+.draft[readonly] { background: var(--bg); color: var(--ink-2); }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.actions .secondary { margin-top: 0; }
+.escalate { display: grid; gap: 6px; margin-top: 14px; }
+.escalate label { font-weight: 600; font-size: 14px; }
+.escalate textarea { width: 100%; border: 1px solid var(--line-2); border-radius: 8px; padding: 9px 12px; }
+.msg { margin: 10px 0 0; font-size: 14px; min-height: 0; }
+.msg:empty { display: none; }
+.msg.ok { color: var(--green); }
+.msg.bad { color: var(--red); }
+.edits { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: 14px; }

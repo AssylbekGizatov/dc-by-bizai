@@ -1,4 +1,5 @@
-/* Страница анализа одного обращения. С API — POST /triage по контракту ТЗ, без API — демо-анализ в браузере. */
+/* Анализ одного обращения. С API — POST /api/tickets (тот же конвейер, что POST /triage; обращение попадает в очередь админа),
+ * без API — демо-анализ в браузере. */
 (function () {
   'use strict';
   const L = window.SC.logic;
@@ -48,22 +49,26 @@
     $('#mode').textContent = mode === 'live' ? 'Подключено к API' : 'Демо-режим';
     $('#mode').className = 'mode ' + mode;
     $('#foot-mode').textContent = mode === 'live'
-      ? 'Анализ выполняет сервис через POST /triage.'
-      : 'Демо-режим: анализ в браузере по ключевым словам и демо-формулировкам правил. Настоящий анализ — через API.';
+      ? 'Анализ выполняет сервис (тот же конвейер, что POST /triage). Каждое обращение попадает в очередь админа.'
+      : 'Демо-режим: анализ в браузере по ключевым словам и демо-формулировкам правил, очередь хранится только в этой вкладке. Настоящий анализ — через API.';
   }
 
   // ---------- анализ ----------
   async function analyze(input) {
     const t0 = performance.now();
-    let result, raw = null;
+    let result, raw = null, ticketId = null;
     if (mode === 'live') {
-      const body = { kind: input.kind, server_lang: input.server_lang, messages: [{ role: 'player', text: input.text, attachments: input.attachments }] };
-      if (input.player) Object.assign(body, { reporter_hash: input.player, created_at: new Date().toISOString() });
+      // POST /api/tickets запускает тот же конвейер, что /triage, и сохраняет обращение в очередь админа.
+      const body = { kind: input.kind, text: input.text, attachments_count: input.attachments, server_lang: input.server_lang };
+      if (input.player) body.player_id = input.player;
       let res;
-      try { res = await fetch('/triage', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); }
+      try { res = await fetch('/api/tickets', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); }
       catch (e) { throw new Error('Сервис не отвечает. Проверьте, что API запущен.'); }
       if (!res.ok) throw new Error(HTTP_ERRORS[res.status] || 'Сервис вернул ошибку ' + res.status + '.');
-      raw = await res.json();
+      const ticket = await res.json();
+      ticketId = ticket.id;
+      (ticket.citations || []).forEach((c) => { const code = mvpCode(c.id); if (!rules.has(code)) rules.set(code, { code, title: c.title || '', text: c.text || '' }); });
+      raw = ticket.result;
       result = JSON.parse(JSON.stringify(raw));
       result.reasons = result.reasons || [];
       result.draft_reply.cited = (result.draft_reply.cited || []).map(mvpCode);
@@ -76,7 +81,8 @@
     const cited = result.draft_reply.cited || [];
     const extra = mode === 'demo' ? (L.CATEGORY_RULES[result.category] || []).filter((c) => rules.has(c)) : [];
     const citations = Array.from(new Set(cited.concat(extra))).slice(0, 3);
-    return { result, raw, citations, ms: performance.now() - t0 };
+    if (mode === 'demo' && window.SC.queue) { try { ticketId = window.SC.queue.addDemo(input, result, citations); } catch (e) { ticketId = null; } }
+    return { result, raw, citations, ticketId, ms: performance.now() - t0 };
   }
   const HTTP_ERRORS = {
     401: 'API требует токен (задан API_TOKEN). Для проверки страницы запустите сервис без API_TOKEN.',
@@ -216,10 +222,12 @@
         h('button', { type: 'button', class: 'secondary', onclick: async (e) => {
           try { await navigator.clipboard.writeText(draft.value); e.target.textContent = 'Скопировано'; } catch (x) { draft.select(); e.target.textContent = 'Выделено, нажмите Ctrl+C'; }
           setTimeout(() => { e.target.textContent = 'Скопировать ответ'; }, 2000);
-        } }, 'Скопировать ответ')),
+        } }, 'Скопировать ответ'),
+        out.ticketId ? h('p', { class: 'muted small' }, 'Обращение добавлено в очередь админа. ',
+          h('a', { href: '#queue/' + encodeURIComponent(out.ticketId) }, 'Открыть в очереди')) : null),
 
-      h('details', { class: 'json' }, h('summary', null, out.raw ? 'Ответ API как есть (JSON)' : 'Ответ в формате API (JSON)'), h('pre', null, JSON.stringify(json, null, 2))),
-      h('p', { class: 'muted small' }, (mode === 'live' ? 'Ответ /triage' : 'Демо-анализ в браузере') + ' за ' + Math.max(1, Math.round(out.ms)) + ' мс.'));
+      h('details', { class: 'json' }, h('summary', null, out.raw ? 'Ответ сервиса как есть (JSON, формат /triage)' : 'Ответ в формате API (JSON)'), h('pre', null, JSON.stringify(json, null, 2))),
+      h('p', { class: 'muted small' }, (mode === 'live' ? 'Ответ сервиса' : 'Демо-анализ в браузере') + ' за ' + Math.max(1, Math.round(out.ms)) + ' мс.'));
   }
 
   // ---------- форма ----------
@@ -252,5 +260,7 @@
     finally { btn.disabled = false; btn.textContent = 'Проанализировать'; }
   });
 
-  detect().then(renderMode);
+  // Общие помощники для очереди админа (queue.js).
+  window.SC.ui = { h, pf, mvpCode, ruleLabel, HTTP_ERRORS, mode: () => mode, rules: () => rules,
+    ready: detect().then(renderMode) };
 })();

@@ -13,12 +13,16 @@
   <header class="top">
     <div class="wrap top-in">
       <img class="logo" src="/assets/logo.svg" width="32" height="32" alt="">
-      <div class="title"><b>Support Copilot</b><span>Анализ обращений игроков Grand Mobile</span></div>
+      <div class="title"><b>Support Copilot</b><span>Обращения игроков Grand Mobile</span></div>
+      <nav class="nav" aria-label="Разделы">
+        <a href="#" data-view="analyze" aria-current="true">Анализ</a>
+        <a href="#queue" data-view="queue">Очередь админа</a>
+      </nav>
       <span class="mode" id="mode">Проверяем подключение…</span>
     </div>
   </header>
 
-  <main class="wrap grid">
+  <main class="wrap grid" id="view-analyze">
     <section class="panel" aria-labelledby="in-h">
       <h1 id="in-h">Обращение игрока</h1>
       <form id="form" novalidate>
@@ -69,6 +73,11 @@
     </section>
   </main>
 
+  <main class="wrap grid" id="view-queue" hidden>
+    <section class="panel" id="q-list" aria-label="Список обращений"></section>
+    <section class="panel" id="q-detail" aria-live="polite"></section>
+  </main>
+
   <footer class="wrap foot">
     <span id="foot-mode"></span>
   </footer>
@@ -76,5 +85,6 @@
   <script src="/js/logic.js"></script>
   <script src="/js/demo-data.js"></script>
   <script src="/js/analyzer.js"></script>
+  <script src="/js/queue.js"></script>
 </body>
 </html>
