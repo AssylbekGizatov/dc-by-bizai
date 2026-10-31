@@ -47,15 +47,15 @@ check: test build check-release
 
 train:
 	@test -n "$(TRAIN)" && test -n "$(MODEL)" || (echo 'Usage: make train TRAIN=/private/tickets_train.jsonl.gz MODEL=/private/complaint_model.npz' >&2; exit 2)
-	PYTHONPATH=backend "$(PYTHON)" -m app.cli train --input "$(TRAIN)" --output "$(MODEL)"
+	PYTHONPATH=backend "$(PYTHON)" -m app.cli train --input "$(TRAIN)" --output "$(MODEL)" $(if $(EXCLUDE),--exclude-manifest "$(EXCLUDE)")
 
 predict:
 	@test -n "$(IN)" && test -n "$(OUT)" || (echo 'Usage: make predict IN=/private/tickets.jsonl OUT=/private/pred.jsonl' >&2; exit 2)
-	PYTHONPATH=backend "$(PYTHON)" scripts/with_env.py "$(PYTHON)" -m app.cli predict --input "$(IN)" --output "$(OUT)"
+	PYTHONPATH=backend $(if $(TRAIN),TRAIN_PATH="$(TRAIN)") "$(PYTHON)" scripts/with_env.py "$(PYTHON)" -m app.cli predict --input "$(IN)" --output "$(OUT)"
 
 evaluate:
 	@test -n "$(IN)" && test -n "$(OUT)" || (echo 'Usage: make evaluate IN=/private/tickets.jsonl OUT=/private/report.json' >&2; exit 2)
-	PYTHONPATH=backend "$(PYTHON)" scripts/with_env.py "$(PYTHON)" -m app.cli evaluate --input "$(IN)" --output "$(OUT)"
+	PYTHONPATH=backend $(if $(TRAIN),TRAIN_PATH="$(TRAIN)") "$(PYTHON)" scripts/with_env.py "$(PYTHON)" -m app.cli evaluate --input "$(IN)" --output "$(OUT)" $(if $(GOLD),--gold "$(GOLD)") $(if $(MANIFEST),--manifest "$(MANIFEST)")
 
 docker-up:
 	docker compose up --build -d

@@ -43,6 +43,64 @@ def to_inference(record: dict) -> TriageRequest:
     return TriageRequest.model_validate(selected)
 
 
+def read_manifest(path: str) -> list[dict]:
+    """scripts/labeling.py writes manifest.jsonl (one row per task); a JSON list is accepted too."""
+    text = Path(path).read_text(encoding="utf-8-sig").strip()
+    if text.startswith("["):
+        return [row for row in json.loads(text) if isinstance(row, dict)]
+    return [json.loads(line) for line in text.splitlines() if line.strip()]
+
+
+def load_gold(gold_path: str, manifest_path: str | None) -> dict[str, dict]:
+    """ticket_id -> {"category", "priority"} from scripts/labeling.py gold rows (+ its manifest)."""
+    by_annotation = {}
+    if manifest_path:
+        by_annotation = {m["annotation_id"]: m.get("ticket_id") for m in read_manifest(manifest_path)}
+    gold: dict[str, dict] = {}
+    with open(gold_path, encoding="utf-8-sig") as source:
+        for line in source:
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            labels = row.get("labels") or {}
+            ticket_id = row.get("ticket_id") or by_annotation.get(row.get("annotation_id"))
+            if ticket_id and labels.get("category") and labels.get("priority"):
+                gold[ticket_id] = {"category": labels["category"], "priority": labels["priority"]}
+    if not gold:
+        raise ValueError("No usable gold rows: pass --manifest when gold rows have no ticket_id")
+    return gold
+
+
+def _macro_f1(pairs: list[tuple[str, str]], labels: list[str]) -> float | None:
+    scores = []
+    for label in labels:
+        tp = sum(g == label and p == label for g, p in pairs)
+        fp = sum(g != label and p == label for g, p in pairs)
+        fn = sum(g == label and p != label for g, p in pairs)
+        if tp + fp + fn == 0:
+            continue  # a class absent from both gold and predictions does not count
+        precision = tp / (tp + fp) if tp + fp else 0.0
+        recall = tp / (tp + fn) if tp + fn else 0.0
+        scores.append(2 * precision * recall / (precision + recall) if precision + recall else 0.0)
+    return round(sum(scores) / len(scores), 4) if scores else None
+
+
+def gold_metrics(scored: list[tuple[str, str, str, str, str]], gold_rows: int) -> dict:
+    """Category accuracy and priority macro-F1, the case's classification metrics, on human labels."""
+    def block(rows):
+        if not rows:
+            return None
+        return {"n": len(rows), "category_accuracy": round(sum(g == p for _, g, p, _, _ in rows) / len(rows), 4),
+                "priority_macro_f1": _macro_f1([(g, p) for *_, g, p in rows], ["p0", "p1", "p2", "p3"]),
+                "confusion": {f"{g} -> {p}": n for (g, p), n in Counter((g, p) for _, g, p, _, _ in rows).most_common() if g != p}}
+    overall = block(scored)
+    return {"accuracy": overall["category_accuracy"] if overall else None,
+            "macro_f1": overall["priority_macro_f1"] if overall else None,
+            "gold": {"rows_in_gold": gold_rows, "rows_found_in_input": len(scored), "all": overall,
+                     "complaint": block([r for r in scored if r[0] == "complaint"]),
+                     "report": block([r for r in scored if r[0] == "report"])}}
+
+
 RULES_REQUIRED = ("RULES_PATH is not set: predictions would cite the synthetic demo rules, which do not exist in rules.json.\n"
                   "Set RULES_PATH=/path/to/rules.json (and TAXONOMY_PATH=/path/to/taxonomy.json) in .env or the environment.\n"
                   "Не указан RULES_PATH: без настоящих правил цитаты будут выдуманными. Укажите путь к rules.json в .env.")
@@ -53,8 +111,23 @@ async def run(args: argparse.Namespace) -> int:
     if not settings.rules_path and not args.allow_synthetic_rules:
         print(RULES_REQUIRED, file=sys.stderr)
         return 2
+    gold = load_gold(args.gold, args.manifest) if getattr(args, "gold", None) else None
+    model = None
+    train_path = getattr(args, "train", None) or os.getenv("TRAIN_PATH") or None
+    if train_path and not (settings.classifier_path and Path(settings.classifier_path).exists()):
+        # No model file yet: train it now (about a minute on CPU) and keep it for later runs.
+        from .trained import train
+        model, trained = train(train_path, exclude_ids=set(gold) if gold else None)
+        if settings.classifier_path:
+            model.save(settings.classifier_path)
+            restrict_private_file(Path(settings.classifier_path))
+            model = None
+        print(json.dumps({"complaint_model": trained}, ensure_ascii=False), file=sys.stderr)
     svc = CopilotService(settings)
+    if model is not None:
+        svc.complaint_model = model
     public_refs = {rule.ref for rule in svc.index.rules if rule.ref != "section"}
+    scored: list[tuple[str, str, str, str, str]] = []  # kind, gold category, predicted, gold priority, predicted
     counts, languages, categories, priorities = Counter(), Counter(), Counter(), Counter()
     review_reasons, generation_modes = Counter(), Counter()
     latencies = []
@@ -76,6 +149,8 @@ async def run(args: argparse.Namespace) -> int:
                     continue
                 try:
                     record = json.loads(line)
+                    if gold is not None and record.get("ticket_id") not in gold:
+                        continue  # with --gold only the human-labelled tickets are scored
                     request = to_inference(record)
                     ticket = await svc.process(request, persist=False)
                 except (ValueError, ValidationError, TypeError) as exc:
@@ -101,6 +176,9 @@ async def run(args: argparse.Namespace) -> int:
                 review_reasons.update(result.reasons)
                 generation_modes[ticket.diagnostics.generation_mode] += 1
                 latencies.append(ticket.diagnostics.timings_ms["total"])
+                if gold is not None:
+                    labels = gold[record["ticket_id"]]
+                    scored.append((request.kind, labels["category"], result.category.value, labels["priority"], result.priority))
         elapsed = time.perf_counter() - begin
         summary = {"schema_version": "1.0", "mode": "offline_local_encoder" if svc.index.encoder else "offline_local_baseline", "external_api_calls": 0,
                    "classifier_mode": svc.health()["classifier_mode"], "retrieval_mode": svc.index.method,
@@ -120,6 +198,9 @@ async def run(args: argparse.Namespace) -> int:
                                    "Latency excludes cold-start dependency/model loading. Compute costs are not measured.",
                                    "Batch cache and deduplication are local to this run; the first processed record in each duplicate group is retained.",
                                    "Validation overlaps training users and texts; it is not an independent holdout."]}
+        if gold is not None:
+            summary.update(gold_metrics(scored, len(gold)))
+            summary["limitations"] = [x for x in summary["limitations"] if not x.startswith("Organizer validation has no")]
         if args.command == "evaluate":
             temporary.write(json.dumps(summary, ensure_ascii=False, indent=2) + "\n")
         else:
@@ -146,13 +227,22 @@ def main() -> None:
         mode.add_argument("--output", required=True)
         mode.add_argument("--allow-synthetic-rules", action="store_true",
                           help="Only for tests and demos: run without RULES_PATH on synthetic rules.")
+        mode.add_argument("--train", help="tickets_train.jsonl(.gz): train the complaint model first when "
+                                          "CLASSIFIER_PATH is unset or missing (also TRAIN_PATH)")
+        if command == "evaluate":
+            mode.add_argument("--gold", help="gold.jsonl from scripts/labeling.py: score only those tickets")
+            mode.add_argument("--manifest", help="labeling manifest.jsonl mapping annotation_id -> ticket_id")
     trainer = sub.add_parser("train", help="Train the complaint model on the private train split.")
     trainer.add_argument("--input", required=True, help="tickets_train.jsonl(.gz)")
     trainer.add_argument("--output", required=True, help="model .npz, outside Git")
+    trainer.add_argument("--exclude-manifest", help="labeling manifest.jsonl: leave the human-labelled tickets out")
     args = parser.parse_args()
     if args.command == "train":
         from .trained import train
-        model, summary = train(args.input)
+        excluded = None
+        if args.exclude_manifest:
+            excluded = {m["ticket_id"] for m in read_manifest(args.exclude_manifest) if m.get("ticket_id")}
+        model, summary = train(args.input, exclude_ids=excluded)
         model.save(args.output)
         restrict_private_file(Path(args.output))
         print(json.dumps(summary, ensure_ascii=False), file=sys.stderr)

@@ -8,7 +8,7 @@
   const STATUS = { pending: 'Новое', reviewed: 'Проверено', escalated: 'Эскалировано', simulated_sent: 'Симуляция' };
   const TABS = [['pending', 'Новые'], ['reviewed', 'Проверенные'], ['escalated', 'Эскалация'], ['simulated_sent', 'Симуляции'], ['', 'Все']];
   const KIND = { complaint: 'Жалоба', report: 'Репорт' };
-  const state = { status: 'pending', human: false, urgent: false, search: '', offset: 0, limit: 50, items: [], total: 0, selected: null,
+  const state = { status: 'pending', human: false, urgent: false, search: '', lang: '', category: '', priority: '', offset: 0, limit: 50, items: [], total: 0, selected: null,
     editing: false, escalating: false, escalationReason:'', msg: null, error: null, loading: false, busy: false, history: [], draft: '', note: '', recovery: '', recoveryNote: '' };
   let demo = null, selectionRequest = 0, loadRequest = 0, historyRequest = 0, inQueue = false, acceptedHash = location.hash;
   const live = () => UI.mode() === 'live';
@@ -40,14 +40,20 @@
         if (state.search) q.set('search', state.search);
         if (state.human) q.set('needs_human', 'true');
         if (state.urgent) q.set('urgent', 'true');
+        if (state.lang) q.set('language', state.lang);
+        if (state.category) q.set('category', state.category);
+        if (state.priority) q.set('priority', state.priority);
         const d = await api('/api/tickets?' + q); items = (d.items || []).map(fromApi); total = d.total ?? items.length;
-      } else { items = demoStore().filter(t => (!state.status || t.status === state.status) && (!state.human || t.result.needs_human) && (!state.urgent || ['p0','p1'].includes(t.result.priority)) && (!state.search || [t.text,t.id,t.player,t.draft].join(' ').toLocaleLowerCase().includes(state.search.toLocaleLowerCase()))).slice().sort((a, b) => b.created_at.localeCompare(a.created_at)); total = items.length; items = items.slice(state.offset,state.offset + state.limit); }
+      } else { items = demoStore().filter(t => (!state.status || t.status === state.status) && (!state.human || t.result.needs_human) && (!state.urgent || ['p0','p1'].includes(t.result.priority)) && byFields(t) && (!state.search || [t.text,t.id,t.player,t.draft].join(' ').toLocaleLowerCase().includes(state.search.toLocaleLowerCase()))).slice().sort((a, b) => b.created_at.localeCompare(a.created_at)); total = items.length; items = items.slice(state.offset,state.offset + state.limit); }
       if (request !== loadRequest) return;
       state.items = items; state.total = total;
     } catch (e) { if (request !== loadRequest) return; state.items = []; state.error = e.message; }
     state.loading = false; renderList();
   }
-  const visible = () => state.items.filter(t => (!state.status || t.status === state.status) && (!state.human || t.result.needs_human) && (!state.urgent || ['p0', 'p1'].includes(t.result.priority)));
+  // Фильтры очереди по языку, категории и приоритету (п. 7 ТЗ); API фильтрует так же: language, category, priority.
+  const byFields = t => (!state.lang || t.result.lang === state.lang) && (!state.category || t.result.category === state.category) && (!state.priority || t.result.priority === state.priority);
+  const filtered = () => !!(state.search || state.human || state.urgent || state.lang || state.category || state.priority);
+  const visible = () => state.items.filter(t => (!state.status || t.status === state.status) && (!state.human || t.result.needs_human) && (!state.urgent || ['p0', 'p1'].includes(t.result.priority)) && byFields(t));
   async function select(id, force = false) {
     const request = ++selectionRequest;
     state.editing = false; state.escalating = false; state.msg = null; state.history = []; state.recovery = ''; state.recoveryNote = '';
@@ -119,12 +125,21 @@
     const chip = (label, key) => h('button', { type: 'button', class: 'chip', disabled: state.busy, 'aria-pressed': String(state[key]), onclick: () => { state[key] = !state[key]; state.offset = 0; load(); } }, label);
     const search = h('input', { type: 'search', id: 'queue-search', maxlength: '200', placeholder: 'Текст, ID или ник игрока', disabled: state.busy }); search.value = state.search;
     const searchForm = h('form', { class: 'queue-search', role: 'search', onsubmit: e => { e.preventDefault(); if (state.busy) return; state.search = search.value.trim(); state.offset = 0; load(); } }, h('label', { class: 'field', for: 'queue-search' }, h('span', null, 'Поиск по обращениям'), search), h('button', { type: 'submit', class: 'primary', disabled: state.busy }, 'Найти'));
+    const picker = (label, key, options) => {
+      const id = 'queue-filter-' + key;
+      const el = h('select', { id, disabled: state.busy, onchange: e => { state[key] = e.target.value; state.offset = 0; load(); } },
+        h('option', { value: '' }, 'Все'), Object.entries(options).map(([value, text]) => h('option', { value }, text)));
+      el.value = state[key];
+      return h('label', { class: 'field', for: id }, h('span', null, label), el);
+    };
+    const filters = h('div', { class: 'q-filters' }, picker('Язык', 'lang', L.LANGS), picker('Категория', 'category', L.CATEGORIES),
+      picker('Приоритет', 'priority', Object.fromEntries(Object.entries(L.PRIORITIES).map(([k, v]) => [k, k.toUpperCase() + ' · ' + v]))));
     let body;
     if (state.loading) body = h('div', { role: 'status' }, h('div', { class: 'loading-line' }), h('p', { class: 'muted small' }, 'Загружаем очередь…'));
     else if (state.error) body = h('div', { class: 'queue-empty' }, h('p', { class: 'error', role: 'alert' }, state.error), h('button', { type: 'button', class: 'secondary', onclick: load }, 'Повторить'));
-    else if (!items.length) body = h('div', { class: 'queue-empty' }, h('h3', null, state.search || state.human || state.urgent ? 'Обращения не найдены' : 'В этом статусе нет обращений'),
-      h('p', null, state.search || state.human || state.urgent ? 'Измените запрос или сбросьте фильтры.' : 'Новые обращения появятся после анализа. Проверенные остаются в своих разделах.'),
-      state.search || state.human || state.urgent || state.offset ? h('button', {type:'button',class:'secondary',onclick:()=>{state.search='';state.human=false;state.urgent=false;state.offset=0;load();}}, 'Сбросить фильтры') : null,
+    else if (!items.length) body = h('div', { class: 'queue-empty' }, h('h3', null, filtered() ? 'Обращения не найдены' : 'В этом статусе нет обращений'),
+      h('p', null, filtered() ? 'Измените запрос или сбросьте фильтры.' : 'Новые обращения появятся после анализа. Проверенные остаются в своих разделах.'),
+      filtered() || state.offset ? h('button', {type:'button',class:'secondary',onclick:()=>{state.search='';state.human=false;state.urgent=false;state.lang='';state.category='';state.priority='';state.offset=0;load();}}, 'Сбросить фильтры') : null,
       h('a', { href: '#', class: 'secondary' }, 'К анализу обращения'),
       live() && !state.items.length && state.status === 'pending' ? h('p', null, h('button', { class: 'link', type: 'button', disabled: state.busy, onclick: addSamples }, 'Добавить синтетические примеры')) : null);
     else body = h('div', null,
@@ -139,7 +154,7 @@
     replaceContent($('#q-list'), h('div', { class: 'queue-list-heading' }, h('h2', null, 'Обращения'), h('span', { class: 'count' }, state.loading ? '…' : items.length + ' в списке')),
       tabs, searchForm, h('div', { class: 'chips' }, chip('Нужен человек', 'human'), chip('Срочные P0–P1', 'urgent'),
         h('button', { type: 'button', class: 'link refresh', disabled: state.loading || state.busy, onclick: load }, 'Обновить')),
-      body, state.total > state.limit || state.offset ? h('div', {class:'pagination', 'aria-label':'Страницы очереди'},
+      filters, body, state.total > state.limit || state.offset ? h('div', {class:'pagination', 'aria-label':'Страницы очереди'},
         h('button',{type:'button',class:'secondary',disabled:state.loading||state.busy||state.offset===0,onclick:()=>{state.offset=Math.max(0,state.offset-state.limit);load();}},'Назад'),
         h('span',null,(state.total ? state.offset+1 : 0)+'–'+Math.min(state.offset+state.items.length,state.total)+' из '+state.total),
         h('button',{type:'button',class:'secondary',disabled:state.loading||state.busy||state.offset+state.limit>=state.total,onclick:()=>{state.offset+=state.limit;load();}},'Далее')) : null);

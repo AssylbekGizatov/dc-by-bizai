@@ -144,7 +144,9 @@ class CopilotService:
                     if existing is not None:
                         self.metrics["idempotency_hits"] += 1
                         return existing
-                repeat = self.store.check_repeat(request.reporter_hash, analysis.text, stamp)
+                # A complaint's problem is the accused player: a repeat complaint about them within the hour is the same case.
+                subject = (request.reported_hash or request.reported_nick or analysis.extracted.nickname) if request.kind == "complaint" else None
+                repeat = self.store.check_repeat(request.reporter_hash, analysis.text, stamp, subject)
                 duplicate = repeat.duplicate
                 flood = repeat.position > self.settings.flood_limit_per_hour
                 if duplicate:

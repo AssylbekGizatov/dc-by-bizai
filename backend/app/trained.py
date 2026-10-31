@@ -113,14 +113,15 @@ def iter_records(path: str):
                 yield json.loads(line)
 
 
-def train(path: str, exclude_texts: set[str] | None = None) -> tuple[ComplaintModel, dict]:
+def train(path: str, exclude_texts: set[str] | None = None, exclude_ids: set[str] | None = None) -> tuple[ComplaintModel, dict]:
+    """exclude_ids: ticket_ids kept out of training (human-labelled test tickets come from train)."""
     from sklearn.linear_model import LogisticRegression
     texts, labels = [], []
     for record in iter_records(path):
         if record.get("kind") != "complaint":
             continue
         label = weak_label(record)
-        if label is None:
+        if label is None or (exclude_ids and record.get("ticket_id") in exclude_ids):
             continue
         text = record_text(record)
         if exclude_texts and text.split(" || ")[0].strip() in exclude_texts:
@@ -136,6 +137,6 @@ def train(path: str, exclude_texts: set[str] | None = None) -> tuple[ComplaintMo
     clf = LogisticRegression(C=4, max_iter=2000, class_weight="balanced")
     clf.fit(features, labels)
     model = ComplaintModel(list(clf.classes_), clf.coef_, clf.intercept_, idf)
-    summary = {"version": VERSION, "trained_on": len(labels),
+    summary = {"version": VERSION, "trained_on": len(labels), "excluded_ids": len(exclude_ids or ()),
                "label_counts": {c: labels.count(c) for c in sorted(set(labels))}}
     return model, summary

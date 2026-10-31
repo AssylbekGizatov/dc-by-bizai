@@ -14,6 +14,7 @@ services:
       API_TOKEN: ${API_TOKEN:-}
       RULES_PATH: ${RULES_PATH:-}
       TAXONOMY_PATH: ${TAXONOMY_PATH:-}
+      CLASSIFIER_PATH: ${CLASSIFIER_PATH:-}
       ENABLE_GROQ: ${ENABLE_GROQ:-false}
       GROQ_API_KEY: ${GROQ_API_KEY:-}
       GROQ_MODEL: ${GROQ_MODEL:-openai/gpt-oss-20b}

@@ -67,6 +67,10 @@ class TicketStore:
                 status TEXT NOT NULL, reviewer_note TEXT NOT NULL, revision INTEGER NOT NULL
             );
         """)
+        # Older databases lack the accused-player key used to match "same player, same problem".
+        columns = {row["name"] for row in self.connection.execute("PRAGMA table_info(dedup)")}
+        if "subject_key" not in columns:
+            self.connection.execute("ALTER TABLE dedup ADD COLUMN subject_key TEXT NOT NULL DEFAULT ''")
         if path != ":memory:":
             restrict_private_file(path)
             for suffix in ("-wal", "-shm"):
@@ -194,12 +198,16 @@ class TicketStore:
                     self.connection.execute("ROLLBACK")
                 raise
 
-    def duplicate(self, reporter: str | None, text: str, observed_at: float | None = None) -> bool:
-        return self.check_repeat(reporter, text, observed_at).duplicate
+    def duplicate(self, reporter: str | None, text: str, observed_at: float | None = None, subject: str | None = None) -> bool:
+        return self.check_repeat(reporter, text, observed_at, subject).duplicate
 
-    def check_repeat(self, reporter: str | None, text: str, observed_at: float | None = None) -> "RepeatCheck":
+    def check_repeat(self, reporter: str | None, text: str, observed_at: float | None = None,
+                     subject: str | None = None) -> "RepeatCheck":
         """«1 игрок, 1 проблема за час» и счётчик обращений игрока за последний час.
 
+        Та же проблема: тот же текст, похожий текст (половина слов общая) или, у жалобы, тот же
+        обвиняемый (subject). Повторные жалобы на одного игрока пишут разными словами: в train
+        у пар, отмеченных админом как duplicate, медианное сходство слов всего 0,25.
         position — номер этого обращения среди обращений игрока за час до него включительно.
         """
         if not reporter:
@@ -209,20 +217,23 @@ class TicketStore:
         normalized = " ".join(text.casefold().split())
         problem_hash = hashlib.sha256(normalized.encode()).hexdigest()
         tokens = {hashlib.sha256(w.encode()).hexdigest()[:16] for w in normalized.split()}
+        subject_key = hashlib.sha256(subject.casefold().strip().encode()).hexdigest() if subject and subject.strip() else ""
         with self.write_transaction():
-            rows = self.connection.execute("SELECT problem_hash,token_hashes FROM dedup WHERE reporter_key=? AND observed_at>=? AND observed_at<=? ORDER BY observed_at DESC LIMIT 100",
+            rows = self.connection.execute("SELECT problem_hash,token_hashes,subject_key FROM dedup WHERE reporter_key=? AND observed_at>=? AND observed_at<=? ORDER BY observed_at DESC LIMIT 100",
                 (reporter_key, stamp - 3600, stamp + 3600)).fetchall()
             duplicate = False
             for row in rows:
                 previous = set(json.loads(row["token_hashes"]))
                 similarity = len(tokens & previous) / max(1, len(tokens | previous))
-                if row["problem_hash"] == problem_hash or (len(tokens) >= 5 and similarity >= 0.85):
+                same_subject = bool(subject_key) and row["subject_key"] == subject_key
+                if row["problem_hash"] == problem_hash or same_subject or (min(len(tokens), len(previous)) >= 3 and similarity >= 0.5):
                     duplicate = True
                     break
             # Flood counts only earlier events: shuffled offline input never flags the first requests of an hour.
             earlier = self.connection.execute("SELECT COUNT(*) FROM dedup WHERE reporter_key=? AND observed_at>? AND observed_at<=?",
                 (reporter_key, stamp - 3600, stamp)).fetchone()[0]
-            self.connection.execute("INSERT INTO dedup(reporter_key,problem_hash,token_hashes,observed_at) VALUES(?,?,?,?)", (reporter_key, problem_hash, json.dumps(sorted(tokens)), stamp))
+            self.connection.execute("INSERT INTO dedup(reporter_key,problem_hash,token_hashes,observed_at,subject_key) VALUES(?,?,?,?,?)",
+                                    (reporter_key, problem_hash, json.dumps(sorted(tokens)), stamp, subject_key))
             # Historical offline inputs may be shuffled. Do not purge them using the
             # newest event timestamp. Match both orders within the same one-hour window.
             # Live traffic gets a 48h TTL; all modes have a hard hashed-state row cap.
