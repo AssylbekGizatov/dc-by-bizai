@@ -61,7 +61,7 @@ class CopilotService:
                     self.metrics["idempotency_hits"] += 1
                     return existing
             started = time.perf_counter()
-            analysis = analyze(request)
+            analysis = analyze(request, self.taxonomy["rule_categories"])
             if self.classifier:
                 analysis = self.classifier.refine(analysis, request.kind)
             nlp_ms = (time.perf_counter() - started) * 1000

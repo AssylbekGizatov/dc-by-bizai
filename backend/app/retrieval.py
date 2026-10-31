@@ -16,7 +16,7 @@ import numpy as np
 from rank_bm25 import BM25Okapi
 from sklearn.feature_extraction.text import TfidfVectorizer
 
-from .nlp import Analysis, COMPILED, INJECTION, UZBEK_CYRILLIC, normalize, uzbek_search_form, without_identifiers, words
+from .nlp import Analysis, COMPILED, INJECTION, UZBEK_CYRILLIC, normalize, rule_ref_key, uzbek_search_form, without_identifiers, words
 from .schemas import Category, Citation
 
 
@@ -224,4 +224,11 @@ class RuleIndex:
 
     def unresolved_references(self, raw_refs: list[str]) -> list[str]:
         # Player-supplied references are claims, never forced into the retrieval output.
-        return [ref for ref in raw_refs if self.ref_counts.get(re.sub(r"^(?:ОП|ЖБ|GZ)\s+", "", ref, flags=re.I), 0) != 1]
+        # A coded ref ("GZ 1.1") resolves to its section; a bare number only if it is unique.
+        unresolved = []
+        for ref in raw_refs:
+            section, number = rule_ref_key(ref)
+            known = f"{section}:{number}" in self.by_id if section else self.ref_counts.get(number, 0) == 1
+            if not known:
+                unresolved.append(ref)
+        return unresolved

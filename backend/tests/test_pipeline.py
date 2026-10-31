@@ -25,9 +25,13 @@ def client():
 
 
 def test_kazakh_complete_legacy_table():
+    # Table as observed in kz-server tickets (the case text swaps ґ/є/ј): ґ→ө, є→ғ, ј→ә.
     value, changes = normalize("ќґѕєјўї ЌҐЅЄЈЎЇ")
-    assert value == "қғңәөұү ҚҒҢӘӨҰҮ"
+    assert value == "қөңғәұү ҚӨҢҒӘҰҮ"
     assert "kazakh_cp1251_restored" in changes
+    # Synthetic words in the same encoding read as Kazakh only with this table.
+    assert normalize("кґмек керек, ойынєа кірдім", kazakh_context=True)[0] == "көмек керек, ойынға кірдім"
+    assert normalize("јзір тїрмеден шыќтым", kazakh_context=True)[0] == "әзір түрмеден шықтым"
 
 
 @pytest.mark.parametrize("text,kind", [

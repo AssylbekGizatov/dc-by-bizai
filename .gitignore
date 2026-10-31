@@ -64,3 +64,20 @@ compose.private.yaml
 .impeccable/
 playwright-report/
 test-results/
+
+# Annotation work: model pre-labelling (Groq) and all labelling data stay local.
+scripts/prelabel_groq.py
+*prelabel*
+labeling/
+groq/
+ls-data/
+.ls-venv/
+tasks_*.json
+export_*.json
+*_test_[0-9].json
+gold*.json
+manifest.json
+sample_summary.json
+label_config_*.xml
+GUIDELINE.md
+LABELING_ASSISTANT.md

@@ -36,7 +36,7 @@ def test_uzbek_cyrillic_is_not_kazakh_legacy_corruption():
     assert "ўйинда тўлов" in value
     assert "ұ" not in value
     assert "kazakh_cp1251_restored" not in changes
-    assert normalize("ќґѕєјўї ЌҐЅЄЈЎЇ")[0] == "қғңәөұү ҚҒҢӘӨҰҮ"
+    assert normalize("ќґѕєјўї ЌҐЅЄЈЎЇ")[0] == "қөңғәұү ҚӨҢҒӘҰҮ"
 
 
 def test_nickname_cannot_create_payment_signal():
