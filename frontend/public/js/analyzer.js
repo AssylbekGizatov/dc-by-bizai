@@ -39,6 +39,9 @@
     rules.set(code, rule);
     // Bare refs in the teammate API remain supported, canonical IDs stay intact for provenance.
     if (c.ref && c.ref !== 'section' && !rules.has(c.ref)) rules.set(c.ref, rule);
+    // Черновик подписывает пункт как «1.1 GZ» / «1.2.3 ЖБ»; проверка ищет его как «GZ 1.1» / «ЖБ 1.2.3».
+    const coded = mvpCode(c.id);
+    if (coded && !rules.has(coded)) rules.set(coded, rule);
     return code;
   }
   function ruleNode(c) {

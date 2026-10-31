@@ -150,7 +150,13 @@
     if (!t) { replaceContent(box); return; }
     const r = t.result, sent = t.status === 'simulated_sent', norm = typeof t.normalizedText === 'string' ? {text:t.normalizedText,changed:t.normalizedText!==t.text} : L.normalizeKk(t.text, r.lang);
     const rules = new Map(t.citations.map(c => [c.code, c]));
-    t.citations.forEach(c => { if (c.ref && !rules.has(c.ref)) rules.set(c.ref, c); });
+    t.citations.forEach(c => {
+      if (c.ref && !rules.has(c.ref)) rules.set(c.ref, c);
+      // «32:1.1» в черновике выглядит как «1.1 GZ», проверка ищет «GZ 1.1» (так же, как в analyzer.js).
+      const m = /^(\d+):(.+)$/.exec(String(c.id || ''));
+      const coded = m && (m[1] === '31' ? 'ЖБ ' + m[2] : m[1] === '32' ? 'GZ ' + m[2] : null);
+      if (coded && !rules.has(coded)) rules.set(coded, c);
+    });
     UI.rules().forEach((v, k) => { if (!rules.has(k)) rules.set(k, v); });
     const draft = h('textarea', { class: 'draft', rows: '6', maxlength: '5000', 'aria-label': 'Черновик ответа игроку', readonly: sent || !state.editing, disabled: state.busy });
     draft.value = state.draft;
