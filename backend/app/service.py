@@ -13,7 +13,7 @@ from .config import Settings
 from .classifier import LocalIntentClassifier
 from .generation import DraftGenerator, public_citations, reply_language
 from .nlp import analyze
-from .retrieval import RuleIndex
+from .retrieval import RuleIndex, category_rule_keys, policy_citations
 from .schemas import Diagnostics, DraftReply, Ticket, TriageRequest, TriageResponse
 from .storage import TicketStore
 from .taxonomy import load_taxonomy
@@ -27,6 +27,10 @@ class CopilotService:
         if settings.mode == "production" and self.index.synthetic:
             raise ValueError("Production cannot use synthetic policies")
         self.classifier = LocalIntentClassifier(self.index.encoder) if self.index.encoder else None
+        self.complaint_model = None
+        if settings.classifier_path:
+            from .trained import ComplaintModel
+            self.complaint_model = ComplaintModel.load(settings.classifier_path)
         self.store = TicketStore(settings.database_path, busy_timeout_seconds=settings.sqlite_busy_timeout_seconds)
         self.generator = generator or DraftGenerator(settings)
         self.cache: OrderedDict[str, tuple] = OrderedDict()
@@ -45,7 +49,7 @@ class CopilotService:
                 "rules_count": len(self.index.rules), "real_rules_loaded": not self.index.synthetic,
                 "generation_mode": "groq_configured_not_verified" if self.settings.enable_groq and self.settings.groq_api_key else "local_template",
                 "retrieval_mode": self.index.method, "local_encoder_loaded": bool(self.index.encoder),
-                "classifier_mode": "local_e5_prototypes+lexical_not_finetuned" if self.classifier else "local_lexical_heuristics_not_trained", "model_quality_validated": False,
+                "classifier_mode": ("trained_complaint_model+" if self.complaint_model else "") + ("local_e5_prototypes+lexical_not_finetuned" if self.classifier else "local_lexical_heuristics"), "model_quality_validated": False,
                 "private_corpus_external_processing": self.settings.allow_private_data_to_groq,
                 "rules_version": self.index.version, "taxonomy_version": self.taxonomy["version"], "taxonomy_draft": self.taxonomy["draft"]}
 
@@ -61,7 +65,7 @@ class CopilotService:
                     self.metrics["idempotency_hits"] += 1
                     return existing
             started = time.perf_counter()
-            analysis = analyze(request, self.taxonomy["rule_categories"])
+            analysis = analyze(request, self.taxonomy["rule_categories"], self.complaint_model)
             if self.classifier:
                 analysis = self.classifier.refine(analysis, request.kind)
             nlp_ms = (time.perf_counter() - started) * 1000
@@ -83,9 +87,13 @@ class CopilotService:
                 reasons.append("Обвинения игрока и любое решение о санкциях проверяет администратор")
             if analysis.injection:
                 reasons.append("Обнаружена попытка изменить инструкции; использован безопасный шаблон")
-            if analysis.language == "und" or analysis.mixed_language:
+            # An off-topic report ("ау", "привет", "+") gets the fixed reply "уточните ваш вопрос"
+            # in the server language: nothing in it depends on the language or a weak guess.
+            auto_template = (analysis.category.value == "report.offtopic" and not analysis.sensitive
+                             and not analysis.injection and not self.index.synthetic)
+            if (analysis.language == "und" or analysis.mixed_language) and not auto_template:
                 reasons.append("Язык неопределён или смешанный; требуется проверка языка ответа")
-            if analysis.confidence < 0.55:
+            if analysis.confidence < 0.55 and not auto_template:
                 reasons.append("Недостаточная уверенность локального базового классификатора")
             if self.index.synthetic:
                 reasons.append("Демонстрационные правила синтетические; автоматическая отправка запрещена")
@@ -98,11 +106,14 @@ class CopilotService:
                 self.cache.move_to_end(cache_key)
                 self.metrics["cache_hits"] += 1
             else:
-                citations = self.index.retrieve(analysis)
+                citations = policy_citations(self.index, analysis)
             retrieval_ms = (time.perf_counter() - retrieval_started) * 1000
-            requires_policy = analysis.category.value not in {"report.question", "report.offtopic", "report.payment"}
+            # [] = the taxonomy ties no rule to this case (payment, question, stuck in textures, ...).
+            requires_policy = category_rule_keys(analysis) != [] and analysis.category.value not in {"report.question", "report.offtopic", "report.payment"}
             if requires_policy and not citations:
                 reasons.append("Не найдено достаточно релевантного пункта правил; нельзя делать вывод")
+            if analysis.category.value == "report.help" and not citations:
+                reasons.append("Нужна помощь администратора в игре: застревание, баг или телепорт")
             if analysis.category.value == "report.question":
                 reasons.append("Проверенная база инструкций по механикам не предоставлена")
             if self.settings.enable_groq:

@@ -232,3 +232,74 @@ class RuleIndex:
             if not known:
                 unresolved.append(ref)
         return unresolved
+
+
+# Category -> the rule point the taxonomy ties to it (taxonomy.json categories[].rules), with the
+# context that picks between several points. Keys are section:ref of the real rules.json; with
+# other (synthetic) rules none of them exist and retrieval is used as before.
+_GZ = re.compile(r"\bзз\b|\bгз\b|\bgz\b|зел[её]н\w*\s+зон|green\s*zone|yashil\s+zona|жасыл\s+аймақ", re.I)
+_GZ_CRIME = re.compile(r"верёвк|веревк|мешк|похищ|ограб|наручник|kishan|arqon|boglab|bog'lab|связ", re.I)
+_HOUSE = re.compile(r"\bдом\w*|квартир|\buy\b|\buyi\w*|\bүй\w*|house|home", re.I)
+_RACISM = re.compile(r"наци|расис|религ|фаши|millat|dinim|ұлт|нәсіл|racis|relig", re.I)
+_IRL = re.compile(r"деанон|докс|doxx|личн\w+\s+(?:данн|информ)|в\s+реал\w*\s+(?:жизни|найду)|адрес", re.I)
+_EXTORT = re.compile(r"вымога|ультиматум|угрож|шантаж", re.I)
+_ADS = re.compile(r"реклам|ссылк|сайт|телеграм|\bтг\b|discord|дискорд|канал|другой\s+сервер|<url>", re.I)
+_QUESTION = re.compile(r"\bкак\b|\bгде\b|почему|помогите|не\s+работ|\bбаг\w*|вопрос|qanday|qayer|nega|қалай|қайда", re.I)
+_TOXIC = re.compile(r"\bбля\w*|\bнах\w*|\bсук\w*|\bхуй\w*|\bхуе\w*|\bеба\w*|\bеби\w*|пизд|\bпид\w*|шлюх|gandon|qotoq|jalab", re.I)
+_REAL_MONEY = re.compile(r"реал\w*|real\s+money|нақты\s+ақша|haqiqiy\s+pul|за\s+деньги|продаж\w*\s+акк|прода[её]т\s+акк", re.I)
+_TELEPORT = re.compile(r"\bтп\b|телепорт|\btp\b|teleport", re.I)
+_STUCK = re.compile(r"застр|текстур|провал|не\s+могу\s+(?:выйти|выбраться|двиг)|stuck|qotib|qolib|тұрып|қалып|баг|bug", re.I)
+
+
+def category_rule_keys(analysis: Analysis) -> list[str] | None:
+    """The rule to cite for the category, or [] when the category needs none; None = use retrieval."""
+    text = analysis.text
+    category = analysis.category.value
+    if category == "complaint.insult":
+        return ["30:2.4"] if _RACISM.search(text) else ["30:2.6"] if _IRL.search(text) else ["30:2.1"]
+    if category == "complaint.dm":
+        if _GZ.search(text):
+            return ["32:1.2"] if _GZ_CRIME.search(text) else ["32:1.1"]
+        return ["30:5.4"] if _HOUSE.search(text) else []
+    if category == "complaint.cheat":
+        return ["30:5.2"]
+    if category == "complaint.scam":
+        return ["30:4.2"] if _EXTORT.search(text) else ["30:4.1"]
+    if category == "complaint.rmt_ads":
+        return ["30:2.3"] if _ADS.search(text) and not _REAL_MONEY.search(text) else ["30:4.4"]
+    if category == "complaint.admin":
+        return ["30:3.4"]
+    if category == "complaint.invalid":
+        if _TOXIC.search(text):
+            return ["31:1.2.7"]
+        return ["31:1.1.2"] if _QUESTION.search(text) else ["31:1.2.3"]
+    if category == "report.offtopic":
+        return ["30:3.1"]
+    if category == "report.help":
+        return ["30:3.1"] if _TELEPORT.search(text) and not _STUCK.search(text) else []
+    if category == "report.complaint":
+        topic = retrieval_topic(analysis)
+        if topic == "complaint.insult":
+            return ["30:2.1"]
+        if topic == "complaint.cheat":
+            return ["30:5.2"]
+        if topic == "complaint.scam":
+            return ["30:4.1"]
+        return ["32:1.1"] if _GZ.search(text) else []
+    if category == "report.account":
+        return ["30:1.4"]
+    # The taxonomy ties no rule to these; a retrieved point would be a guess ("Ответ без цитат
+    # допустим только для категорий, где правила не нужны").
+    if category in {"report.payment", "report.question", "complaint.other"}:
+        return []
+    return None
+
+
+def policy_citations(index: "RuleIndex", analysis: Analysis) -> list[Citation]:
+    """One citation the category actually needs; retrieval only where the taxonomy names no rule."""
+    keys = category_rule_keys(analysis)
+    if keys is not None and all(key in index.by_id for key in keys):
+        return [index.by_id[key] for key in keys]
+    if keys is not None and not keys:
+        return []
+    return index.retrieve(analysis)[:1]

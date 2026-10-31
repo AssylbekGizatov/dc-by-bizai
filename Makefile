@@ -3,10 +3,10 @@ VENV ?= .venv
 PYTHON ?= $(VENV)/bin/python
 NPM ?= npm
 
-.PHONY: help setup setup-backend setup-frontend dev api build serve test test-backend test-frontend test-release check check-release predict evaluate docker-up docker-down
+.PHONY: help setup setup-backend setup-frontend dev api build serve test test-backend test-frontend test-release check check-release train predict evaluate docker-up docker-down
 
 help:
-	@printf '%s\n' 'make setup              Install Python + frontend dependencies' 'make dev                Local API :8000 and UI :5173' 'make build && make serve  Build UI and serve everything on :8000' 'make check              Tests, TypeScript, UI build, release hygiene' 'make predict IN=/private/tickets.jsonl OUT=/private/pred.jsonl' 'make evaluate IN=/private/tickets.jsonl OUT=/private/report.json' 'make docker-up          Build + run a loopback-only Docker demo' 'make docker-down        Stop containers; keep runtime data'
+	@printf '%s\n' 'make setup              Install Python + frontend dependencies' 'make dev                Local API :8000 and UI :5173' 'make build && make serve  Build UI and serve everything on :8000' 'make check              Tests, TypeScript, UI build, release hygiene' 'make train TRAIN=/private/tickets_train.jsonl.gz MODEL=/private/complaint_model.npz' 'make predict IN=/private/tickets.jsonl OUT=/private/pred.jsonl' 'make evaluate IN=/private/tickets.jsonl OUT=/private/report.json' 'make docker-up          Build + run a loopback-only Docker demo' 'make docker-down        Stop containers; keep runtime data'
 
 setup: setup-backend setup-frontend
 
@@ -44,6 +44,10 @@ check-release:
 	python3 scripts/check_release.py
 
 check: test build check-release
+
+train:
+	@test -n "$(TRAIN)" && test -n "$(MODEL)" || (echo 'Usage: make train TRAIN=/private/tickets_train.jsonl.gz MODEL=/private/complaint_model.npz' >&2; exit 2)
+	PYTHONPATH=backend "$(PYTHON)" -m app.cli train --input "$(TRAIN)" --output "$(MODEL)"
 
 predict:
 	@test -n "$(IN)" && test -n "$(OUT)" || (echo 'Usage: make predict IN=/private/tickets.jsonl OUT=/private/pred.jsonl' >&2; exit 2)

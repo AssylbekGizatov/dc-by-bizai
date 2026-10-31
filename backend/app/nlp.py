@@ -11,11 +11,42 @@ from dataclasses import dataclass
 
 from .schemas import Category, Extracted, TriageRequest
 
-# cp1251 substitution table as observed in the handout tickets; preserve uppercase as well.
-# The case text lists ґ→ғ, є→ә, ј→ө, but every kz-server ticket with substitutes reads as
-# Kazakh only with ґ→ө (кґмек, ґтініш, жґндеп), є→ғ (аєалар, ойынєа), ј→ә (јзірлік).
-# ќ→қ, ѕ→ң, ў→ұ, ї→ү agree with the case text.
-KAZAKH_SUBSTITUTIONS = {"ќ": "қ", "ґ": "ө", "ѕ": "ң", "є": "ғ", "ј": "ә", "ў": "ұ", "ї": "ү"}
+# cp1251 substitutes. ќ→қ, ѕ→ң, ў→ұ, ї→ү are unambiguous. For ґ, є, ј the case text lists
+# ґ→ғ, є→ә, ј→ө, while kz-server tickets read as Kazakh only with ґ→ө (кґмек, ґтініш),
+# є→ғ (аєалар, ойынєа), ј→ә (јзірлік). Both readings are handled by position: Kazakh has no
+# two vowels in a row, so next to a vowel the substitute is the consonant ғ, between
+# consonants it is the vowel (ґ→ө, є→ә); ј is always a vowel, ө for known ө-stems, else ә.
+KAZAKH_SUBSTITUTIONS = {"ќ": "қ", "ѕ": "ң", "ў": "ұ", "ї": "ү"}
+AMBIGUOUS_VOWEL = {"ґ": "ө", "є": "ә"}
+KAZAKH_VOWELS = set("аәеёиоөұүыіэюяуј")
+O_STEMS = ("көмек", "көр", "көз", "көл", "көп", "көш", "көт", "көң", "сөз", "сөй", "өз", "өт", "өл", "өмір", "өн",
+           "өр", "өш", "өк", "бөл", "бөг", "төл", "төм", "төр", "төб", "жөн", "мөл", "дөң", "сөн", "шөп", "қөз")
+A_STEMS = ("әзір", "әке", "әже", "әкім", "әдем", "әлі", "әр", "әл", "сәлем", "мәсел", "кәзір", "бәр", "нәрсе", "кәсіп")
+
+
+def _resolve_ambiguous(text: str) -> str:
+    chars = list(text)
+    lower = text.casefold()
+    for i, ch in enumerate(lower):
+        if ch not in AMBIGUOUS_VOWEL:
+            continue
+        prev = lower[i - 1] if i > 0 else ""
+        nxt = lower[i + 1] if i + 1 < len(lower) else ""
+        consonant = prev in KAZAKH_VOWELS or (nxt in KAZAKH_VOWELS and nxt != "")
+        letter = "ғ" if consonant else AMBIGUOUS_VOWEL[ch]
+        chars[i] = letter.upper() if text[i].isupper() else letter
+    resolved = "".join(chars)
+
+    def vowel_j(match: re.Match) -> str:
+        word = match.group(0)
+        folded = word.casefold()
+        letter = "ө" if (folded.replace("ј", "ө").startswith(O_STEMS)
+                         and not folded.replace("ј", "ә").startswith(A_STEMS)) else "ә"
+        return "".join((letter.upper() if c == "Ј" else letter) if c in "јЈ" else c for c in word)
+
+    return re.sub(r"\w*[јЈ]\w*", vowel_j, resolved)
+
+
 TRANSLATION = str.maketrans(KAZAKH_SUBSTITUTIONS | {k.upper(): v.upper() for k, v in KAZAKH_SUBSTITUTIONS.items()})
 # Seen only in substituted Kazakh. є/ї (and і) are real Ukrainian letters on cis servers
 # (голосової, матюкається), ў is a real Uzbek letter.
@@ -63,6 +94,8 @@ def normalize(text: str, kazakh_context: bool | None = None) -> tuple[str, list[
     if uzbek:
         translation = {k: v for k, v in translation.items() if chr(k) not in "ўЎ"}
     translated = current.translate(translation)
+    if apply_table:
+        translated = _resolve_ambiguous(translated)
     if translated != current:
         changes.append("kazakh_cp1251_restored")
     apostrophized = re.sub(r"([oOgG])[‘’ʻʼ`´]", r"\1'", translated)
@@ -238,6 +271,11 @@ def rule_hint(refs: list[str], rule_categories: dict[str, set[str]] | None, pref
     return None
 
 
+# Below these probabilities the trained complaint model abstains and the rules decide. On the
+# organizer valid, by admin outcome (270 complaints): rules alone 0.641, with the model 0.815.
+MODEL_MIN_PROBABILITY = 0.4
+MODEL_OVER_SIGNAL_PROBABILITY = 0.6
+MODEL_SURE_PROBABILITY = 0.7
 GAME_FINE = re.compile(r"(?:о|за)?плат\w*\s+(?:\w+\s+){0,2}штраф\w*|штраф\w*", re.IGNORECASE)
 # Links are masked as <url> in the handout; fraps/video links are how players attach evidence.
 EVIDENCE_LINK = re.compile(r"<url>|https?://", re.IGNORECASE)
@@ -282,9 +320,11 @@ class Analysis:
     evidence_count: int
 
 
-def analyze(request: TriageRequest, rule_categories: dict[str, set[str]] | None = None) -> Analysis:
+def analyze(request: TriageRequest, rule_categories: dict[str, set[str]] | None = None, complaint_model=None) -> Analysis:
     """rule_categories: taxonomy rule ref -> category codes (taxonomy.json categories[].rules),
-    used only when no text signal names the problem ("2.1 ОП" alone)."""
+    used only when no text signal names the problem ("2.1 ОП" alone).
+    complaint_model: optional trained model (app.trained); when it is confident it decides the
+    complaint category, otherwise the rules below do."""
     raw = "\n".join(m.text for m in request.messages if m.role == "player")
     text, changes = normalize(raw, kazakh_legacy_context(request.region, request.server_lang))
     lang, lang_confidence, mixed = detect_language(text, request.server_lang)
@@ -312,6 +352,16 @@ def analyze(request: TriageRequest, rule_categories: dict[str, set[str]] | None 
             category, confidence = Category.invalid, 0.5
         else:
             category, confidence = Category.other, 0.35
+        if complaint_model is not None:
+            from .trained import request_text
+            predicted, probability = complaint_model.predict(request_text(request))
+            # Empty or question-only complaints ("жб", "вот он", "как купить дом") stay invalid
+            # unless the model is sure ("за что бан?" is an appeal, not a question).
+            # An explicit keyword signal (оск, дм, sababsiz, софт...) is overridden only by a fairly sure model.
+            needed = (MODEL_SURE_PROBABILITY if category == Category.invalid
+                      else MODEL_OVER_SIGNAL_PROBABILITY if match else MODEL_MIN_PROBABILITY)
+            if probability >= needed:
+                category, confidence = Category(predicted), max(0.55, min(0.95, probability))
     else:
         if hit["payment"]:
             category = Category.payment

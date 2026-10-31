@@ -47,7 +47,7 @@ def test_ukrainian_i_is_not_kazakh(text):
     assert analyze(ticket(text)).language != "kk"
 
 
-@pytest.mark.parametrize("text", ["meni kishanlab moshinaga solib olib ketdi", "sababsiz sokdi chora korilsin", "nega ban berdi"])
+@pytest.mark.parametrize("text", ["u meni kishanlab olib ketdi", "sababsiz sokdi chora korilsin", "nega ban berdi"])
 def test_uzbek_latin_without_apostrophes(text):
     assert analyze(ticket(text)).language == "uz"
 

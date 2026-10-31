@@ -146,7 +146,17 @@ def main() -> None:
         mode.add_argument("--output", required=True)
         mode.add_argument("--allow-synthetic-rules", action="store_true",
                           help="Only for tests and demos: run without RULES_PATH on synthetic rules.")
+    trainer = sub.add_parser("train", help="Train the complaint model on the private train split.")
+    trainer.add_argument("--input", required=True, help="tickets_train.jsonl(.gz)")
+    trainer.add_argument("--output", required=True, help="model .npz, outside Git")
     args = parser.parse_args()
+    if args.command == "train":
+        from .trained import train
+        model, summary = train(args.input)
+        model.save(args.output)
+        restrict_private_file(Path(args.output))
+        print(json.dumps(summary, ensure_ascii=False), file=sys.stderr)
+        return
     try:
         raise SystemExit(asyncio.run(run(args)))
     except (ValueError, OSError) as exc:

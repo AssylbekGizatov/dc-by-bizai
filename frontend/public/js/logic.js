@@ -32,18 +32,46 @@
   const LANGS = { ru: 'Русский', kk: 'Қазақша', uz: 'Oʻzbekcha', en: 'English', es: 'Español', pt: 'Português', und: 'Не определён' };
   const STATUSES = { new: 'Новое', reviewed: 'Проверено', escalated: 'Эскалировано', sent: 'Отправлено' };
 
-  // Таблица замен из ТЗ: на kz-серверах казахские буквы набраны похожими символами cp1251.
-  const KK_MAP = { 'ќ': 'қ', 'ґ': 'ғ', 'ѕ': 'ң', 'є': 'ә', 'ј': 'ө', 'ў': 'ұ', 'ї': 'ү' };
+  // Замены cp1251 на kz-серверах — так же, как в бэкенде (backend/app/nlp.py).
+  // ќ→қ, ѕ→ң, ў→ұ, ї→ү однозначны. ґ, є, ј в ТЗ и в данных читаются по-разному
+  // (ТЗ: ґ→ғ, є→ә, ј→ө; тикеты: кґмек = көмек, ойынєа = ойынға), поэтому выбор по позиции:
+  // рядом с гласной — согласная ғ, между согласными — гласная (ґ→ө, є→ә); ј всегда гласная.
+  const KK_MAP = { 'ќ': 'қ', 'ѕ': 'ң', 'ў': 'ұ', 'ї': 'ү' };
   Object.keys(KK_MAP).forEach((k) => { KK_MAP[k.toUpperCase()] = KK_MAP[k].toUpperCase(); });
   const KK_RE = /[ќґѕєјўїЌҐЅЄЈЎЇ]/g;
+  const KK_VOWELS = 'аәеёиоөұүыіэюяуј';
+  const AMBIGUOUS = { 'ґ': 'ө', 'є': 'ә' };
+  const O_STEMS = ['көмек', 'көр', 'көз', 'көл', 'көп', 'көш', 'көт', 'көң', 'сөз', 'сөй', 'өз', 'өт', 'өл', 'өмір', 'өн',
+    'өр', 'өш', 'өк', 'бөл', 'бөг', 'төл', 'төм', 'төр', 'төб', 'жөн', 'мөл', 'дөң', 'сөн', 'шөп', 'қөз'];
+  const A_STEMS = ['әзір', 'әке', 'әже', 'әкім', 'әдем', 'әлі', 'әр', 'әл', 'сәлем', 'мәсел', 'кәзір', 'бәр', 'нәрсе', 'кәсіп'];
+  const caseLike = (orig, letter) => (orig !== orig.toLowerCase() ? letter.toUpperCase() : letter);
 
   /** Замена 1:1 по символам, поэтому позиции в тексте не сдвигаются. */
   function normalizeKk(text, serverLang) {
     // ў — штатная буква узбекской кириллицы, поэтому меняем только для казахского контекста.
     if (serverLang !== 'kk' && !/[ќґѕєј]/i.test(text)) return { text, changed: 0 };
     let changed = 0;
-    const out = text.replace(KK_RE, (ch) => { changed += 1; return KK_MAP[ch] || ch; });
-    return { text: out, changed };
+    const lower = text.toLowerCase();
+    const chars = [...text];
+    const low = [...lower];
+    const out = chars.map((ch, i) => {
+      const l = low[i];
+      if (KK_MAP[ch]) { changed += 1; return KK_MAP[ch]; }
+      if (AMBIGUOUS[l]) {
+        changed += 1;
+        const prev = low[i - 1] || '', next = low[i + 1] || '';
+        const consonant = (prev && KK_VOWELS.includes(prev)) || (next && KK_VOWELS.includes(next));
+        return caseLike(ch, consonant ? 'ғ' : AMBIGUOUS[l]);
+      }
+      return ch;
+    }).join('');
+    const final = out.replace(/[\p{L}\p{N}_]*[јЈ][\p{L}\p{N}_]*/gu, (word) => {
+      const folded = word.toLowerCase();
+      const asO = folded.replaceAll('ј', 'ө'), asA = folded.replaceAll('ј', 'ә');
+      const letter = O_STEMS.some((s) => asO.startsWith(s)) && !A_STEMS.some((s) => asA.startsWith(s)) ? 'ө' : 'ә';
+      return [...word].map((c) => { if (c === 'ј' || c === 'Ј') { changed += 1; return caseLike(c, letter); } return c; }).join('');
+    });
+    return { text: final, changed };
   }
 
   const WORDS = {

@@ -58,7 +58,9 @@ def test_exact_response_schema_and_evidence_honesty(client):
     assert result["extracted"]["server"] == "4"
     assert result["extracted"]["has_evidence"] is True
     assert "99.99" not in result["draft_reply"]["cited"]
-    assert "не проверено" in result["draft_reply"]["text"]
+    # Screenshots are not available: the draft says they will be checked, never what they show.
+    assert "проверит доказательства" in result["draft_reply"]["text"]
+    assert "видно" not in result["draft_reply"]["text"]
 
 
 def test_dataset_adapter_removes_outcomes_admin_and_heuristic_language():

@@ -34,7 +34,7 @@ def test_private_routes_require_auth(client,method,path,body):
 def test_public_health_has_no_secret_and_states_baseline(client):
     health=client.get('/health'); assert health.status_code==200
     assert TOKEN not in health.text
-    assert health.json()['classifier_mode']=='local_lexical_heuristics_not_trained'
+    assert health.json()['classifier_mode']=='local_lexical_heuristics'
     assert health.json()['model_quality_validated'] is False
     ready=client.get('/ready').json()
     assert ready['capability']=='local_baseline'

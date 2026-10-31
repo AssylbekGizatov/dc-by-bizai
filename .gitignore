@@ -81,3 +81,6 @@ sample_summary.json
 label_config_*.xml
 GUIDELINE.md
 LABELING_ASSISTANT.md
+
+# Trained complaint model: built from the private train split by `make train`, never committed.
+*.npz
