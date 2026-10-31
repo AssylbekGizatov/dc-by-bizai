@@ -236,7 +236,17 @@ def main() -> None:
     trainer.add_argument("--input", required=True, help="tickets_train.jsonl(.gz)")
     trainer.add_argument("--output", required=True, help="model .npz, outside Git")
     trainer.add_argument("--exclude-manifest", help="labeling manifest.jsonl: leave the human-labelled tickets out")
+    reports = sub.add_parser("train-reports", help="Train the report model on manually labelled tickets.")
+    reports.add_argument("--input", required=True, help="labelled .jsonl (kind, text, field, accused, category, split)")
+    reports.add_argument("--output", required=True, help="model .npz, outside Git")
     args = parser.parse_args()
+    if args.command == "train-reports":
+        from .trained import train_reports
+        model, summary = train_reports(args.input)
+        model.save(args.output)
+        restrict_private_file(Path(args.output))
+        print(json.dumps(summary, ensure_ascii=False), file=sys.stderr)
+        return
     if args.command == "train":
         from .trained import train
         excluded = None

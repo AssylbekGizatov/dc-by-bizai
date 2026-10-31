@@ -276,6 +276,9 @@ def rule_hint(refs: list[str], rule_categories: dict[str, set[str]] | None, pref
 MODEL_MIN_PROBABILITY = 0.4
 MODEL_OVER_SIGNAL_PROBABILITY = 0.6
 MODEL_SURE_PROBABILITY = 0.7
+# Report model (manually labelled reports): chosen on dev, 18 reports — rules 0.611 acc / 0.565
+# macro-F1, rules + model at 0.3: 0.778 / 0.776. Payment and account stay rule-only (p0 routes).
+REPORT_MODEL_MIN_PROBABILITY = 0.3
 GAME_FINE = re.compile(r"(?:о|за)?плат\w*\s+(?:\w+\s+){0,2}штраф\w*|штраф\w*", re.IGNORECASE)
 # Links are masked as <url> in the handout; fraps/video links are how players attach evidence.
 EVIDENCE_LINK = re.compile(r"<url>|https?://", re.IGNORECASE)
@@ -320,7 +323,8 @@ class Analysis:
     evidence_count: int
 
 
-def analyze(request: TriageRequest, rule_categories: dict[str, set[str]] | None = None, complaint_model=None) -> Analysis:
+def analyze(request: TriageRequest, rule_categories: dict[str, set[str]] | None = None, complaint_model=None,
+            report_model=None) -> Analysis:
     """rule_categories: taxonomy rule ref -> category codes (taxonomy.json categories[].rules),
     used only when no text signal names the problem ("2.1 ОП" alone).
     complaint_model: optional trained model (app.trained); when it is confident it decides the
@@ -376,6 +380,14 @@ def analyze(request: TriageRequest, rule_categories: dict[str, set[str]] | None 
         else:
             category = Category.offtopic
         confidence = 0.73 if category != Category.offtopic else 0.35
+        # The model separates help / question / complaint / off-topic; it never creates or
+        # removes a payment or account route (mandatory human review, p0) on its own.
+        if report_model is not None and category not in {Category.payment, Category.account}:
+            from .trained import request_text
+            predicted, probability = report_model.predict(request_text(request))
+            if (probability >= REPORT_MODEL_MIN_PROBABILITY and predicted.startswith("report.")
+                    and predicted not in {Category.payment.value, Category.account.value}):
+                category, confidence = Category(predicted), max(0.55, min(0.95, probability))
     if category in {Category.account, Category.payment, Category.admin}:
         sensitive.append(category.value)
     # Payment words stay a sensitive (human) signal everywhere, but p0 needs a payment

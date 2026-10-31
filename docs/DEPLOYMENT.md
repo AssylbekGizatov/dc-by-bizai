@@ -22,6 +22,7 @@ services:
       RULES_PATH: /private/rules.json
       TAXONOMY_PATH: /private/taxonomy.json
       CLASSIFIER_PATH: /private/complaint_model.npz   # make train … MODEL=…; без него — только правила
+      REPORT_CLASSIFIER_PATH: /private/report_model.npz   # make train-reports …; без него репорты — только правила
       ENABLE_GROQ: "false"
       ALLOW_PRIVATE_DATA_TO_GROQ: "false"
     volumes:
@@ -40,6 +41,12 @@ services:
       - type: bind
         source: ${PRIVATE_MODEL_FILE:?Set absolute complaint model path}
         target: /private/complaint_model.npz
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${PRIVATE_REPORT_MODEL_FILE:?Set absolute report model path}
+        target: /private/report_model.npz
         read_only: true
         bind:
           create_host_path: false

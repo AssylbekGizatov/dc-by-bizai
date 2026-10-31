@@ -113,6 +113,32 @@ def iter_records(path: str):
                 yield json.loads(line)
 
 
+def _fit(texts: list[str], labels: list[str], C: float) -> ComplaintModel:
+    from sklearn.linear_model import LogisticRegression
+    counts = _counts(texts)
+    document_frequency = np.bincount(counts.indices, minlength=counts.shape[1])
+    idf = np.log((1 + counts.shape[0]) / (1 + document_frequency)) + 1.0
+    clf = LogisticRegression(C=C, max_iter=3000, class_weight="balanced").fit(_tfidf(counts, idf), labels)
+    return ComplaintModel(list(clf.classes_), clf.coef_, clf.intercept_, idf)
+
+
+def train_reports(path: str, C: float = 4.0) -> tuple[ComplaintModel, dict]:
+    """Report-channel model trained on manually labelled tickets (scripts/labeling.py rows:
+    kind, text, field, accused, category, split). Only split == "train" is used, so the dev
+    and human test parts never enter training. Same hashed features as the complaint model."""
+    texts, labels = [], []
+    for row in iter_records(path):
+        if row.get("kind") != "report" or row.get("split") != "train" or not str(row.get("category", "")).startswith("report."):
+            continue
+        texts.append(model_text(row.get("text", ""), row.get("field"), row.get("accused", "")))
+        labels.append(row["category"])
+    if len(set(labels)) < 2:
+        raise ValueError("Not enough labelled reports to train")
+    model = _fit(texts, labels, C)
+    return model, {"version": VERSION, "channel": "report", "trained_on": len(labels),
+                   "label_counts": {c: labels.count(c) for c in sorted(set(labels))}}
+
+
 def train(path: str, exclude_texts: set[str] | None = None, exclude_ids: set[str] | None = None) -> tuple[ComplaintModel, dict]:
     """exclude_ids: ticket_ids kept out of training (human-labelled test tickets come from train)."""
     from sklearn.linear_model import LogisticRegression

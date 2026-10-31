@@ -31,6 +31,10 @@ class CopilotService:
         if settings.classifier_path:
             from .trained import ComplaintModel
             self.complaint_model = ComplaintModel.load(settings.classifier_path)
+        self.report_model = None
+        if settings.report_classifier_path:
+            from .trained import ComplaintModel
+            self.report_model = ComplaintModel.load(settings.report_classifier_path)
         self.store = TicketStore(settings.database_path, busy_timeout_seconds=settings.sqlite_busy_timeout_seconds)
         self.generator = generator or DraftGenerator(settings)
         self.cache: OrderedDict[str, tuple] = OrderedDict()
@@ -49,7 +53,7 @@ class CopilotService:
                 "rules_count": len(self.index.rules), "real_rules_loaded": not self.index.synthetic,
                 "generation_mode": "groq_configured_not_verified" if self.settings.enable_groq and self.settings.groq_api_key else "local_template",
                 "retrieval_mode": self.index.method, "local_encoder_loaded": bool(self.index.encoder),
-                "classifier_mode": ("trained_complaint_model+" if self.complaint_model else "") + ("local_e5_prototypes+lexical_not_finetuned" if self.classifier else "local_lexical_heuristics"), "model_quality_validated": False,
+                "classifier_mode": ("trained_complaint_model+" if self.complaint_model else "") + ("trained_report_model+" if self.report_model else "") + ("local_e5_prototypes+lexical_not_finetuned" if self.classifier else "local_lexical_heuristics"), "model_quality_validated": False,
                 "private_corpus_external_processing": self.settings.allow_private_data_to_groq,
                 "rules_version": self.index.version, "taxonomy_version": self.taxonomy["version"], "taxonomy_draft": self.taxonomy["draft"]}
 
@@ -65,7 +69,7 @@ class CopilotService:
                     self.metrics["idempotency_hits"] += 1
                     return existing
             started = time.perf_counter()
-            analysis = analyze(request, self.taxonomy["rule_categories"], self.complaint_model)
+            analysis = analyze(request, self.taxonomy["rule_categories"], self.complaint_model, self.report_model)
             if self.classifier:
                 analysis = self.classifier.refine(analysis, request.kind)
             nlp_ms = (time.perf_counter() - started) * 1000

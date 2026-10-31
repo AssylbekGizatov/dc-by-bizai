@@ -30,6 +30,8 @@ class Settings:
     local_encoder_path: str | None = field(default_factory=lambda: os.getenv("LOCAL_ENCODER_PATH") or None)
     # Trained complaint model (make train); built locally from the private train split, outside Git.
     classifier_path: str | None = field(default_factory=lambda: os.getenv("CLASSIFIER_PATH") or None)
+    # Report model (make train-reports) from the manually labelled sample; also outside Git.
+    report_classifier_path: str | None = field(default_factory=lambda: os.getenv("REPORT_CLASSIFIER_PATH") or None)
     cors_origins: tuple[str, ...] = field(default_factory=lambda: tuple(x.strip() for x in os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",") if x.strip()))
     frontend_dist: str | None = field(default_factory=lambda: os.getenv("FRONTEND_DIST") or None)
     max_request_bytes: int = 131_072
