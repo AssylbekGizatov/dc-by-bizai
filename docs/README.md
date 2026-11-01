@@ -9,6 +9,12 @@
 | [Последняя проверка](DEADLINE_VERIFICATION.md) | Итоговый код, команды, N, конфигурация и ограничения |
 | [Метрики](METRICS.md) | Текущие показатели поведения и отдельно историческая оценка команды |
 
+## Актуальная схема процесса
+
+[Подробный flow и границы MVP](FLOW_UPDATED.md) · [PNG](current-flow.png) · [SVG](current-flow.svg).
+
+Исходные [Mermaid](user-flow.mmd), [PNG](user-flow.png) и [SVG](user-flow.svg) сохранены для истории.
+
 ## Для разработки и эксплуатации
 
 [Backend](../backend/README.md) · [Frontend](../frontend/README.md) · [NLP](NLP_GUIDE.md) · [API и хранение](BACKEND_OPERATIONS.md) · [Запуск и Docker](DEPLOYMENT.md) · [Безопасность](../SECURITY.md) · [Сторонние компоненты](../THIRD_PARTY_NOTICES.md).
