@@ -21,8 +21,11 @@ BLOCKED_ENDINGS = (".jsonl", ".jsonl.gz", ".csv", ".tsv", ".parquet", ".arrow",
                    ".sqlite", ".sqlite3", ".db", ".npz", ".npy", ".zip", ".gz",
                    ".tgz", ".tar", ".bz2", ".xz", ".7z", ".pem", ".key",
                    ".safetensors", ".bin", ".pt", ".pth", ".onnx")
-# Preserve the original, reviewed design image. New binaries need explicit review.
-REVIEWED_BINARY_BLOBS = {"docs/user-flow.png": "7d5865a3d910e40611948d0334c8959001453e55"}
+# Preserve reviewed diagram images by exact Git blob hash. New binaries need explicit review.
+REVIEWED_BINARY_BLOBS = {
+    "docs/user-flow.png": "7d5865a3d910e40611948d0334c8959001453e55",
+    "docs/current-flow.png": "2178324352ca4e41ca8dbd0a202c8339bfa2ae28",
+}
 SECRET_PATTERNS = (
     re.compile(r"gsk_[A-Za-z0-9]{20,}"),
     re.compile(r"gh[pousr]_[A-Za-z0-9]{30,}"),
