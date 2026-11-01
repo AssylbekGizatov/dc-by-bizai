@@ -99,6 +99,10 @@ class ComplaintModel:
     def predict(self, text: str) -> tuple[str, float]:
         x = _tfidf(_counts([text]), self.idf)
         scores = np.asarray(x @ self.coef.T).ravel() + self.intercept
+        if len(self.classes) == 2 and scores.size == 1:
+            positive = float(1.0 / (1.0 + np.exp(-np.clip(scores[0], -700, 700))))
+            best = int(positive >= 0.5)
+            return self.classes[best], positive if best else 1.0 - positive
         scores = np.exp(scores - scores.max())
         probs = scores / scores.sum()
         best = int(np.argmax(probs))
@@ -127,11 +131,17 @@ def train_reports(path: str, C: float = 4.0) -> tuple[ComplaintModel, dict]:
     kind, text, field, accused, category, split). Only split == "train" is used, so the dev
     and human test parts never enter training. Same hashed features as the complaint model."""
     texts, labels = [], []
-    for row in iter_records(path):
-        if row.get("kind") != "report" or row.get("split") != "train" or not str(row.get("category", "")).startswith("report."):
+    rows=list(iter_records(path))
+    rows=exclude_groups(rows, {str(i) for i,r in enumerate(rows) if r.get('split') in {'dev','test'}}, by_index=True)
+    for row in rows:
+        category=(row.get('labels') or {}).get('category') or row.get('category','')
+        if row.get("kind") != "report" or row.get("split") != "train" or not str(category).startswith("report."):
             continue
-        texts.append(model_text(row.get("text", ""), row.get("field"), row.get("accused", "")))
-        labels.append(row["category"])
+        player=row.get('text') or row.get('player_text') or ''
+        if not player.strip():
+            raise ValueError('Gold labels require joined player_text/text; labels alone are not training inputs')
+        texts.append(model_text(player, row.get("field"), row.get("accused", row.get('accused_text',''))))
+        labels.append(category)
     if len(set(labels)) < 2:
         raise ValueError("Not enough labelled reports to train")
     model = _fit(texts, labels, C)
@@ -143,7 +153,7 @@ def train(path: str, exclude_texts: set[str] | None = None, exclude_ids: set[str
     """exclude_ids: ticket_ids kept out of training (human-labelled test tickets come from train)."""
     from sklearn.linear_model import LogisticRegression
     texts, labels = [], []
-    for record in iter_records(path):
+    for record in exclude_groups(list(iter_records(path)), exclude_ids or set()):
         if record.get("kind") != "complaint":
             continue
         label = weak_label(record)
@@ -166,3 +176,27 @@ def train(path: str, exclude_texts: set[str] | None = None, exclude_ids: set[str
     summary = {"version": VERSION, "trained_on": len(labels), "excluded_ids": len(exclude_ids or ()),
                "label_counts": {c: labels.count(c) for c in sorted(set(labels))}}
     return model, summary
+
+
+def exclude_groups(rows: list[dict], excluded: set[str], *, by_index: bool = False) -> list[dict]:
+    """Exclude complete connected components by reporter, explicit group and exact text.
+
+    Construct groups before selecting labels, so an unlabelled linking row cannot leak.
+    Short identical texts are also grouped conservatively.
+    """
+    parents=list(range(len(rows)));seen={}
+    def find(i):
+        while parents[i]!=i:
+            parents[i]=parents[parents[i]];i=parents[i]
+        return i
+    for i,row in enumerate(rows):
+        text=row.get('text') or row.get('player_text') or record_text(row).split(' || ')[0]
+        keys=[('user',row.get('reporter_hash')),('group',row.get('group_id') or row.get('group')),
+              ('text',' '.join(str(text).casefold().split()))]
+        for kind,value in keys:
+            if not value:continue
+            key=(kind,str(value))
+            if key in seen:parents[find(i)]=find(seen[key])
+            else:seen[key]=i
+    blocked={find(i) for i,row in enumerate(rows) if (str(i) if by_index else row.get('ticket_id')) in excluded}
+    return [row for i,row in enumerate(rows) if find(i) not in blocked]

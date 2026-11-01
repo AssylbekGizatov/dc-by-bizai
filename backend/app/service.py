@@ -6,7 +6,8 @@ import json
 import time
 import uuid
 from collections import Counter, OrderedDict
-from dataclasses import replace
+from dataclasses import replace, asdict
+import re
 from datetime import datetime, timezone
 
 from .config import Settings
@@ -72,6 +73,9 @@ class CopilotService:
             analysis = analyze(request, self.taxonomy["rule_categories"], self.complaint_model, self.report_model)
             if self.classifier:
                 analysis = self.classifier.refine(analysis, request.kind)
+            # Safety routing is independent of trained/embedding category overrides.
+            safety = analyze(request, self.taxonomy["rule_categories"])
+            analysis = replace(analysis, sensitive=list(dict.fromkeys(safety.sensitive + analysis.sensitive)))
             nlp_ms = (time.perf_counter() - started) * 1000
             references = self.index.unresolved_references(analysis.extracted.rule_refs)
             reply_lang = reply_language(analysis.language, request.server_lang)
@@ -79,6 +83,8 @@ class CopilotService:
                              "evidence": analysis.evidence_count, "nickname": analysis.extracted.nickname,
                              "refs": analysis.extracted.rule_refs, "server": analysis.extracted.server,
                              "rules": self.index.version, "model": self.settings.groq_model, "groq": self.settings.enable_groq}
+            cache_payload.update(request=request.model_dump(mode="json"), analysis={**asdict(analysis), "extracted": analysis.extracted.model_dump()},
+                                 classifier_instances=[id(self.complaint_model), id(self.report_model), id(self.classifier)])
             cache_key = hashlib.sha256(json.dumps(cache_payload, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
             cached = self.cache.get(cache_key)
             reasons = []
@@ -94,7 +100,10 @@ class CopilotService:
             # An off-topic report ("ау", "привет", "+") gets the fixed reply "уточните ваш вопрос"
             # in the server language: nothing in it depends on the language or a weak guess.
             auto_template = (analysis.category.value == "report.offtopic" and not analysis.sensitive
-                             and not analysis.injection and not self.index.synthetic)
+                             and not analysis.injection and not self.index.synthetic
+                             and bool(re.fullmatch(r"\s*(?:привет|здравствуйте|ау|hello|hi|salom|сәлем|\+)\s*[!.?]*\s*", analysis.text, re.I)))
+            if analysis.category.value == "report.offtopic" and not auto_template:
+                reasons.append("Неизвестное обращение: требуется уточнение и проверка человеком")
             if (analysis.language == "und" or analysis.mixed_language) and not auto_template:
                 reasons.append("Язык неопределён или смешанный; требуется проверка языка ответа")
             if analysis.confidence < 0.55 and not auto_template:

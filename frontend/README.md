@@ -1,5 +1,7 @@
 # Grand Mobile — рабочее место поддержки
 
+Последняя проверка: **34 frontend-теста, TypeScript и Vite build прошли**. Более ранние browser/E2E-результаты сохранены отдельно в [VERIFICATION.md](../docs/VERIFICATION.md); они не означают повторный E2E на последнем коде. [Навигация по документации](../docs/README.md).
+
 Vanilla HTML/CSS/JavaScript + Vite. Два связанных сценария: анализ обращения и очередь администратора. React не используется. Шрифт IBM Plex Sans размещается локально; его OFL-лицензия включена в `public/licenses/` и сборку.
 
 ```bash

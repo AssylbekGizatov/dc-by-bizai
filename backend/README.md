@@ -1,5 +1,7 @@
 # Backend: supported behavior and limits
 
+Current verification: **402 Python tests passed, 2 Windows symlink-privilege skips** across backend and scripts. See [the final verification report](../docs/DEADLINE_VERIFICATION.md) for configuration and [the documentation index](../docs/README.md) for historical evidence.
+
 ## Run
 
 From the repository root (root Makefile installs dependencies):
@@ -14,10 +16,10 @@ The default is an **offline local baseline**. It starts with clearly synthetic r
 
 ## Pipeline
 
-1. Pydantic validates a bounded request. Only `role=player` text is analyzed; admin outcomes and reported-player rebuttals cannot become labels.
+1. Pydantic validates a bounded request. Player text drives local analysis; optional trained features also include the reported-player comment and rule form field. Administrator replies and outcomes are excluded from inference features.
 2. Local Unicode/cp1251-glyph normalization, lexical language detection (ru/kk/uz/en/es/pt, else und), regex facts and conservative intent/risk rules. Original player text is retained separately.
-3. Optional **local multilingual E5** performs zero-shot category-prototype fallback for unresolved lexical intents. This is not a trained classifier and its confidence is not calibrated. Safety escalation is independent of category classification.
-4. Local `rank-bm25` + scikit-learn character TF-IDF retrieval; if local weights are configured, dense E5 + reciprocal-rank fusion. Compound `section:ref` IDs avoid repeated bare rule-number collisions. Scope/intent gates reject contextually incompatible rules; weak retrieval abstains. This is conservative heuristic relevance, not a proven entailment system.
+3. Optional **hashed n-gram LogisticRegression** models refine complaint/report categories from private local artifacts. Binary models use sigmoid; training excludes held-out connected groups when supplied. Optional **local multilingual E5** performs zero-shot category-prototype fallback for unresolved lexical intents. This is not a trained classifier and its confidence is not calibrated. Safety escalation is independent of category classification.
+4. Local `rank-bm25` + scikit-learn character TF-IDF retrieval; if local weights are configured, dense E5 + reciprocal-rank fusion. Compound `section:ref` IDs avoid repeated bare rule-number collisions. The search branch uses scope/intent gates and can abstain. Direct taxonomy-selected citations currently bypass equivalent relevance checks; applicability and report/complaint subpoint consistency remain open. Existence is not semantic relevance.
 5. Local reviewed-language clauses produce a safe draft. **Optional Groq returns a compact, strict-schema clause-order plan only**, with no authority to add policy claims or actions. Trusted code renders the approved language clauses locally; the model never supplies arbitrary player-facing prose. Any additional prose, missing required clause, invalid JSON/citation, timeout, or provider failure falls back locally. A model-generated draft always requires a human. This deliberately sacrifices free-form drafting to meet the no-promises/no-unseen-images requirement; no unrestricted-generative quality claim is made.
 6. Human review persists the edited draft and revision history as feedback. Feedback is not automatically promoted to training truth.
 
@@ -41,6 +43,8 @@ Protected routes require `Authorization: Bearer $API_TOKEN` whenever configured.
 | `DATABASE_PATH` | `/tmp/grandmobile/copilot.sqlite3`; put private persisted data outside Git/static roots |
 | `RULES_PATH` | Private rules JSON; absent uses `fixtures/synthetic_rules.json` |
 | `TAXONOMY_PATH` | Optional private taxonomy; validates supported codes, retains mandatory-human categories |
+| `CLASSIFIER_PATH` / `REPORT_CLASSIFIER_PATH` | Private local complaint/report LR artifacts; absent means heuristic mode |
+| `TRAIN_PATH` | Leave empty for inference-only runs; CLI can train a missing complaint model when explicitly supplied |
 | `LOCAL_ENCODER_PATH` | Existing local SentenceTransformer directory only; absent is lexical mode |
 | `LOCAL_MODEL_THREADS` | `2`; allowed 1–16 |
 | `ENABLE_GROQ` | `false`; enable explicitly |
@@ -52,7 +56,7 @@ Protected routes require `Authorization: Bearer $API_TOKEN` whenever configured.
 | `ALLOW_PRIVATE_DATA_TO_GROQ` | `false`; private corpus is blocked from external processing by default. Do not enable for organizer data without explicit permission. |
 | `API_TOKEN` | Optional in loopback demo, mandatory production |
 | `CORS_ORIGINS` | localhost/127.0.0.1:5173 |
-| `REQUEST_RATE_PER_MINUTE` | `120`, per process/client IP for mutations |
+| `REQUEST_RATE_PER_MINUTE` | `120`, per process/client IP for API reads and writes except health/readiness |
 | `FRONTEND_DIST` | Optional built UI directory. Only that directory is served; traversal and symlink escapes rejected. |
 
 Model dependencies are optional (`requirements-models.txt`). The loader enforces offline mode, disables Hub telemetry, uses safetensors and `trust_remote_code=False`, and never downloads weights. Use the root model-download tooling explicitly and retain the official model license. Health reports whether the encoder actually loaded.
@@ -73,7 +77,7 @@ Both commands force external generation **off**, even if the parent environment 
 
 Predictions and queue/feedback files contain private derived data: never commit/upload them. Output uses owner-only temporary files and atomic replacement; a malformed line returns nonzero without replacing a previous output. SQLite and WAL/SHM files are owner-only. Dedup stores reporter/text hashes, is scoped to the same reporter and ±one-hour event window, never merges anonymous users, and has bounded state. A duplicate is a queue signal, never a punishment.
 
-Evaluation reports contract coverage, citation existence, escalation rate, distributions, runtime, and external API cost. It intentionally leaves classification accuracy, F1, semantic citation quality and draft quality null: the supplied validation records have no category/priority gold labels, and user/text overlap means they are not an independent holdout. Native-speaker review, adjudicated labels, calibration and broad contextual citation review are still required.
+Evaluation reports contract coverage, citation existence, escalation rate, distributions, runtime, and external API cost. Without independent gold, classification accuracy/F1 remain null. With `--gold` and `--manifest`, it scores the server pipeline against linked human labels. Semantic citation and draft quality still require expert assessment. Organizer validation alone has no category/priority gold labels, and user/text overlap prevents treating it as an independent holdout. Native-speaker review, adjudicated labels, calibration and broad contextual citation review are still required.
 
 ## OSS choices
 

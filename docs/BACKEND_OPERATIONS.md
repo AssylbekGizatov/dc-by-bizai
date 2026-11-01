@@ -1,5 +1,7 @@
 # API, concurrency and private storage
 
+Current code includes context-bound caching and independent risk routing. The final verification report is [DEADLINE_VERIFICATION.md](DEADLINE_VERIFICATION.md); historical checks are not additional current test runs.
+
 The service remains one FastAPI process with a SQLite queue. Start one Uvicorn
 worker. The HTTP limiter, inference cache and creation lock are process-local;
 they are not distributed rate limits. SQLite transactions protect writes across
@@ -113,3 +115,9 @@ on Windows without that privilege only that test is skipped, while path
 traversal and private-file exposure tests still run. These checks do not establish
 deployment readiness, classifier accuracy, native-speaker draft quality or an
 end-to-end latency target.
+
+## Inference cache and safety routing
+
+The cache key hashes the complete validated request (including reported-player context), analyzed category/priority/facts, rules version, configured generator and loaded classifier instance identities. It lives only within a service instance; model-instance replacement changes the key. Prompt/template code changes require restarting the process. Neither the key nor private request bodies are logged.
+
+Sensitive-topic signals are recomputed independently of classifier overrides. Unknown off-topic requests require clarification and human review; only a narrow greeting whitelist can use the fixed automatic template when other safety conditions permit it. Cache reuse does not bypass a newly computed needs_human requirement. Regression coverage: test_context_safety.py.

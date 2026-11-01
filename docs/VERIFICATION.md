@@ -1,8 +1,10 @@
 # Verification and measurement boundaries
 
+> **Историческое свидетельство этапа.** Содержание ниже сохранено для прослеживаемости и относится к проверенному тогда коду. После новых командных изменений актуальны **402 Python-теста (2 skipped), 34 frontend-теста и build** из [DEADLINE_VERIFICATION.md](DEADLINE_VERIFICATION.md). Docker, полный browser E2E и live Groq не повторялись в завершающем прогоне. Старые проверки не складываются с текущей suite и не объявляются заново пройденными.
+
 Verification date: 2026-10-31. Windows, Python 3.12, Node 24, actual Edge/Chromium and loopback Uvicorn. This document contains synthetic measurements only; organizer-data reports and screenshots containing private rules stay outside Git.
 
-Final integrated local result: **256 Python tests passed, 2 Windows privilege skips; 33 frontend tests passed; TypeScript/Vite build and release hygiene passed. All 6 browser E2E scenarios passed in 38.6 s.** Independent review results in `FINAL_REVIEW.md` are subsets, not additional unique tests.
+Historical integrated local result: **256 Python tests passed, 2 Windows privilege skips; 33 frontend tests passed; TypeScript/Vite build and release hygiene passed. All 6 browser E2E scenarios passed in 38.6 s.** Independent review results in `FINAL_REVIEW.md` are subsets, not additional unique tests.
 
 ## Reproduce
 
@@ -43,7 +45,7 @@ The pinned real E5 weights were loaded in a separate CPU environment with two mo
 
 ## Container verification
 
-The initial Docker Desktop engine failure cleared on recheck. The final code image `grandmobile-copilot:verified-20261031` built successfully; image ID `sha256:06512321ee894aa9cdcdbdba0ce161780f6cd0335da00878a2b0cbdb868dc1e9`. A separate loopback-only container on port 18086, using only synthetic data and a fresh disposable volume, passed frontend/readiness/healthcheck, auth 401, creation 201, idempotent replay, revision conflict, escalation, terminal simulation, request limits and forwarded-header rate limiting. A real restart preserved the draft, administrator note, history and idempotency record.
+The initial Docker Desktop engine failure cleared on recheck. The code image checked at that historical stage `grandmobile-copilot:verified-20261031` built successfully; image ID `sha256:06512321ee894aa9cdcdbdba0ce161780f6cd0335da00878a2b0cbdb868dc1e9`. A separate loopback-only container on port 18086, using only synthetic data and a fresh disposable volume, passed frontend/readiness/healthcheck, auth 401, creation 201, idempotent replay, revision conflict, escalation, terminal simulation, request limits and forwarded-header rate limiting. A real restart preserved the draft, administrator note, history and idempotency record.
 
 Runtime UID was 10001, the root filesystem was read-only, all capabilities were dropped and no-new-privileges was enabled. SQLite files were owned by the app user with owner-only modes. The built application filesystem and image environment contained no detected credential patterns, real datasets/rules, model weights or pre-existing runtime database; only reviewed synthetic fixtures were included. This scoped inspection is evidence, not a universal guarantee against every possible secret encoding. Verification removes only its own disposable container, volume and token; the tested image remains local.
 
@@ -53,7 +55,7 @@ Shutdown was checked separately: the log recorded `Application shutdown complete
 
 ## Remaining limits
 
-- No independent human category/priority labels: accuracy, macro-F1, false escalation rate, citation relevance and native-language draft quality remain unmeasured. See the annotation protocol; auto-labels are not gold.
+- At that stage no independent category/priority labels were available. Later team-reported results on 198 singly annotated rows are preserved in METRICS.md; the final classifier changes have not been re-evaluated on those private artifacts. False escalation rate, citation relevance and native-language draft quality still require expert labels.
 - Local Windows skips two symlink-creation tests because the account lacks that privilege. Three targeted Linux filesystem/symlink tests passed separately; Windows confidentiality is tested through NTFS ACL rather than POSIX mode bits.
 - GitHub Actions runs for the published improvements failed before acquiring a runner, with no test steps. The exact external cause could not be read. Local Docker build/run is confirmed as above; a successful hosted Linux CI run is still not confirmed.
 - A small synthetic response-time sample does not prove the 5-second production p95 target. There is no real game-server connection; sending remains a recorded simulation.

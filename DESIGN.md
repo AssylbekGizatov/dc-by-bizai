@@ -57,6 +57,10 @@ components:
     textColor: "{colors.surface}"
 ---
 
+## Evidence and scope
+
+This visual system remains the implementation reference. The final frontend run passed 34 tests and TypeScript/Vite build. Earlier browser/responsive checks are documented in [design-verification](docs/design-verification.md), with their historical scope retained. Product claims and measurements are maintained in [the submission](docs/SUBMISSION.md) and [the latest verification](docs/DEADLINE_VERIFICATION.md).
+
 ## Overview
 
 This is an operator's workspace. The screen gives the original request, extracted information, source rules and response their own stable areas. Classification and human-review reasons precede the comparison. The signature is the two-part review document, with the player's source on the left and the editable response on the right, separated by a single hairline.

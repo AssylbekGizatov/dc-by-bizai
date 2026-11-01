@@ -1,5 +1,7 @@
 # Grand Mobile Support Copilot
 
+Product status and evidence: [submission](docs/SUBMISSION.md), [latest verification](docs/DEADLINE_VERIFICATION.md). Capabilities below describe the existing review workflow; productivity gains require a separate user study.
+
 <!-- impeccable:product-schema 1 -->
 
 ## Platform
@@ -21,7 +23,8 @@ The primary comparison is between the player's original words, machine interpret
 ## Capabilities and Constraints
 
 - Preserve vanilla HTML/CSS/JavaScript + Vite and FastAPI contracts.
-- Payments, ban appeals and suspected account compromise require human review.
+- Payments, ban appeals and suspected account compromise require human review independently of model category. Unknown off-topic also requires clarification and review.
+- Rule identity and source visibility are implemented; applicability of direct taxonomy-selected citations remains incomplete.
 - No game-server connection exists. Sending records a simulation only.
 - The service has attachment counts, not attachment contents. Player claims are unverified.
 - Preserve drafts on recoverable errors; resolve revision conflicts against fresh server data.

@@ -1,5 +1,7 @@
 # Сторонние компоненты и источники
 
+Документ сохраняет сведения о зависимостях проверенного проекта. Новые пакеты и модели при редактуре документации не устанавливались. Инструкции optional encoder находятся в [backend README](backend/README.md); актуальный режим и измерения — в [отчёте проверки](docs/DEADLINE_VERIFICATION.md).
+
 Код решения принадлежит команде; этот перечень не меняет его лицензионный статус и не распространяет лицензии библиотек на данные Grand Mobile. Прямые зависимости устанавливаются пакетными менеджерами, а не копируются из чужого приложения. Полные тексты лицензий и notices сохраняются в установленных дистрибутивах; при распространении контейнера сохраняйте их и notices транзитивных зависимостей.
 
 | Компонент | Использование | Лицензия / первичный источник |
@@ -9,7 +11,7 @@
 | Uvicorn | ASGI server | [BSD-3-Clause](https://github.com/Kludex/uvicorn/blob/main/LICENSE.md) |
 | HTTPX | Опциональный вызов Groq | [BSD-3-Clause](https://github.com/encode/httpx/blob/master/LICENSE.md) |
 | NumPy | Вычисления retrieval | [BSD-3-Clause и bundled notices](https://github.com/numpy/numpy/blob/main/LICENSE.txt) |
-| scikit-learn | Символьный TF-IDF | [BSD-3-Clause](https://github.com/scikit-learn/scikit-learn/blob/main/COPYING) |
+| scikit-learn | Символьный TF-IDF, hashed n-grams и LogisticRegression | [BSD-3-Clause](https://github.com/scikit-learn/scikit-learn/blob/main/COPYING) |
 | rank-bm25 | Лексический retrieval | [Apache-2.0](https://github.com/dorianbrown/rank_bm25/blob/master/LICENSE) |
 | IBM Plex Sans (`@fontsource-variable/ibm-plex-sans` 5.3.0) | Локально размещённый variable-шрифт интерфейса | [SIL OFL-1.1](frontend/public/licenses/ibm-plex-sans-OFL.txt) |
 | DOM Testing Library | DOM-интеграционные тесты vanilla-интерфейса | [MIT](https://github.com/testing-library/dom-testing-library/blob/main/LICENSE) |
@@ -24,7 +26,7 @@
 | Transformers | Только optional local encoder | [Apache-2.0](https://github.com/huggingface/transformers/blob/main/LICENSE) |
 | SentencePiece | Только optional tokenizer | [Apache-2.0](https://github.com/google/sentencepiece/blob/master/LICENSE) |
 
-Точные frontend-версии и транзитивные зависимости зафиксированы `frontend/package-lock.json`; Python ranges находятся в `backend/requirements*.txt`, а проверенное разрешение runtime/test зависимостей — в `constraints.txt` (Python 3.12, Linux). `make setup` и Docker используют эти constraints. Проверенные optional encoder versions находятся в `constraints-models.txt`; CPU PyTorch устанавливается с официального индекса по инструкции README. Для воспроизводимого пилота также зафиксируйте digest базовых Docker-образов после проверки.
+Точные frontend-версии и транзитивные зависимости зафиксированы `frontend/package-lock.json`; Python ranges находятся в `backend/requirements*.txt`, а проверенное разрешение runtime/test зависимостей — в `constraints.txt` (Python 3.12, Linux). `make setup` и Docker используют эти constraints. Проверенные optional encoder versions находятся в `constraints-models.txt`; CPU PyTorch устанавливается отдельно для optional encoder; версии закреплены в requirements-models/constraints-models. Он не нужен для базового локального запуска. Для воспроизводимого пилота также зафиксируйте digest базовых Docker-образов после проверки.
 
 ## Шрифт интерфейса
 
